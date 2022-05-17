@@ -10,50 +10,101 @@ import (
 	"net/netip"
 )
 
-var Conn *ipset.Conn
+var (
+	Conn4 *ipset.Conn
+	Conn6 *ipset.Conn
+)
 
 func Check() error {
 	var err error
-	Conn, err = ipset.Dial(netfilter.ProtoIPv4, nil)
-	return err
+	Conn4, err = ipset.Dial(netfilter.ProtoIPv4, nil)
+	if err != nil {
+		return err
+	}
+	Conn6, err = ipset.Dial(netfilter.ProtoIPv6, nil)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func Create(setName string, setType string) error {
 	typeName := "hash:net"
-	var f netfilter.ProtoFamily
+	var (
+		f    netfilter.ProtoFamily
+		Conn *ipset.Conn
+	)
 	switch setType {
 	case "4":
 		f = netfilter.ProtoIPv4
+		Conn = Conn4
 	case "6":
 		f = netfilter.ProtoIPv6
+		Conn = Conn6
 	default:
 		return errors.New("set type must be 4 or 6")
 	}
-	P, err := Conn.Protocol()
-	if err != nil {
-		return err
-	}
-	return Conn.Create(setName, typeName, P.Protocol.Get(), f, ipset.CreateDataHashSize(1024), ipset.CreateDataMaxElem(65535))
+	err := Conn.Create(setName, typeName, 0, f)
+	return err
 }
 
 func AddAddr(setName string, ip netip.Addr) error {
-	return Conn.Add(setName, ipset.NewEntry(ipset.EntryIP(net.ParseIP(ip.String())), ipset.EntryCidr(uint8(ip.BitLen()))))
+	if ip.Is4() {
+		err := Conn4.Add(setName, ipset.NewEntry(ipset.EntryIP(net.ParseIP(ip.String())), ipset.EntryCidr(uint8(ip.BitLen()))))
+		return err
+	} else if ip.Is6() {
+		err := Conn6.Add(setName, ipset.NewEntry(ipset.EntryIP(net.ParseIP(ip.String())), ipset.EntryCidr(uint8(ip.BitLen()))))
+		return err
+	} else {
+		return errors.New("invalid ip")
+	}
 }
 
 func AddPrefix(setName string, cidr netip.Prefix) error {
-	return Conn.Add(setName, ipset.NewEntry(ipset.EntryIP(net.ParseIP(cidr.Addr().String())), ipset.EntryCidr(uint8(cidr.Bits()))))
+	if cidr.Addr().Is4() {
+		err := Conn4.Add(setName, ipset.NewEntry(ipset.EntryIP(net.ParseIP(cidr.Addr().String())), ipset.EntryCidr(uint8(cidr.Bits()))))
+		return err
+	} else if cidr.Addr().Is6() {
+		err := Conn6.Add(setName, ipset.NewEntry(ipset.EntryIP(net.ParseIP(cidr.Addr().String())), ipset.EntryCidr(uint8(cidr.Bits()))))
+		return err
+	} else {
+		return errors.New("invalid cidr")
+	}
 }
 
 func DelAddr(setName string, ip netip.Addr) error {
-	return Conn.Delete(setName, ipset.NewEntry(ipset.EntryIP(net.ParseIP(ip.String())), ipset.EntryCidr(uint8(ip.BitLen()))))
+	if ip.Is4() {
+		err := Conn4.Delete(setName, ipset.NewEntry(ipset.EntryIP(net.ParseIP(ip.String())), ipset.EntryCidr(uint8(ip.BitLen()))))
+		return err
+	} else if ip.Is6() {
+		err := Conn6.Delete(setName, ipset.NewEntry(ipset.EntryIP(net.ParseIP(ip.String())), ipset.EntryCidr(uint8(ip.BitLen()))))
+		return err
+	} else {
+		return errors.New("invalid ip")
+	}
 }
 
 func DelPrefix(setName string, cidr netip.Prefix) error {
-	return Conn.Delete(setName, ipset.NewEntry(ipset.EntryIP(net.ParseIP(cidr.Addr().String())), ipset.EntryCidr(uint8(cidr.Bits()))))
+	if cidr.Addr().Is4() {
+		err := Conn4.Delete(setName, ipset.NewEntry(ipset.EntryIP(net.ParseIP(cidr.Addr().String())), ipset.EntryCidr(uint8(cidr.Bits()))))
+		return err
+	} else if cidr.Addr().Is6() {
+		err := Conn6.Delete(setName, ipset.NewEntry(ipset.EntryIP(net.ParseIP(cidr.Addr().String())), ipset.EntryCidr(uint8(cidr.Bits()))))
+		return err
+	} else {
+		return errors.New("invalid cidr")
+	}
 }
 
 func ExistAddr(setName string, ip netip.Addr) bool {
-	err := Conn.Test(setName, ipset.EntryIP(net.ParseIP(ip.String())), ipset.EntryCidr(uint8(ip.BitLen())))
+	var err error
+	if ip.Is4() {
+		err = Conn4.Test(setName, ipset.EntryIP(net.ParseIP(ip.String())), ipset.EntryCidr(uint8(ip.BitLen())))
+	} else if ip.Is6() {
+		err = Conn6.Test(setName, ipset.EntryIP(net.ParseIP(ip.String())), ipset.EntryCidr(uint8(ip.BitLen())))
+	} else {
+		return false
+	}
 	if err != nil {
 		return false
 	}
@@ -61,7 +112,14 @@ func ExistAddr(setName string, ip netip.Addr) bool {
 }
 
 func ExistPrefix(setName string, cidr netip.Prefix) bool {
-	err := Conn.Test(setName, ipset.EntryIP(net.ParseIP(cidr.Addr().String())), ipset.EntryCidr(uint8(cidr.Bits())))
+	var err error
+	if cidr.Addr().Is4() {
+		err = Conn4.Test(setName, ipset.EntryIP(net.ParseIP(cidr.Addr().String())), ipset.EntryCidr(uint8(cidr.Bits())))
+	} else if cidr.Addr().Is6() {
+		err = Conn6.Test(setName, ipset.EntryIP(net.ParseIP(cidr.Addr().String())), ipset.EntryCidr(uint8(cidr.Bits())))
+	} else {
+		return false
+	}
 	if err != nil {
 		return false
 	}

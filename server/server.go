@@ -64,6 +64,8 @@ func (cfg *Config) ServerRun(ctx context.Context) {
 	} else {
 		Log = log.New(os.Stdout, "", log.LstdFlags|log.Lshortfile)
 	}
+	ClientMap = make(map[string]ConfigParseClient)
+	ClientCacheMap = make(map[string]cachemap.CacheMap)
 	for _, v := range cfg.Clients {
 		IDSha256 := string(tool.Sha256([]byte(v.ID)))
 		ClientMap[IDSha256] = v
@@ -77,12 +79,12 @@ func (cfg *Config) ServerRun(ctx context.Context) {
 		} else {
 			s := 0
 			err = ipset.Create(cfg.IPSet.Name4, "4")
-			if err != nil {
+			if err != nil && !strings.Contains(err.Error(), "exist") {
 				Log.Println(fmt.Sprintf("ipset create error: %s", err))
 				s++
 			}
 			err = ipset.Create(cfg.IPSet.Name6, "6")
-			if err != nil {
+			if err != nil && !strings.Contains(err.Error(), "exist") {
 				Log.Println(fmt.Sprintf("ipset create error: %s", err))
 				s++
 			}
@@ -190,7 +192,7 @@ func (cfg *Config) ServerRun(ctx context.Context) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			HTTPServerRun(tlsCfg, ListenAddr, cfg.Transport.HTTP)
+			HTTPServerRun(tlsCfg, ctx, ListenAddr, cfg.Transport.HTTP)
 		}()
 	case "quic":
 		wg.Add(1)
@@ -235,7 +237,7 @@ func TCPServerRun(tlsCfg *tls.Config, ctx context.Context, ListenAddr string) {
 	}
 	defer func(l net.Listener) {
 		err := l.Close()
-		if err != nil {
+		if err != nil && !strings.Contains(err.Error(), "use of closed network connection") {
 			Log.Fatalln("close listener error:", err)
 		}
 	}(l)
@@ -278,7 +280,7 @@ func TCPServerRun(tlsCfg *tls.Config, ctx context.Context, ListenAddr string) {
 	}
 }
 
-func HTTPServerRun(tlsCfg *tls.Config, ListenAddr string, HTTPCfg ConfigTransportHTTP) {
+func HTTPServerRun(tlsCfg *tls.Config, ctx context.Context, ListenAddr string, HTTPCfg ConfigTransportHTTP) {
 	Log.Println("listen on", ListenAddr, "HTTP Server")
 	l, err := net.Listen("tcp", ListenAddr)
 	if err != nil {
@@ -286,7 +288,7 @@ func HTTPServerRun(tlsCfg *tls.Config, ListenAddr string, HTTPCfg ConfigTranspor
 	}
 	defer func(l net.Listener) {
 		err := l.Close()
-		if err != nil {
+		if err != nil && !strings.Contains(err.Error(), "use of closed network connection") {
 			Log.Fatalln("close listener error:", err)
 		}
 	}(l)
@@ -312,13 +314,22 @@ func HTTPServerRun(tlsCfg *tls.Config, ListenAddr string, HTTPCfg ConfigTranspor
 			}
 		}),
 	}
+	go func() {
+		<-ctx.Done()
+		err := s.Shutdown(context.Background())
+		if err != nil {
+			Log.Println("server shutdown error:", err)
+		} else {
+			Log.Println("server shutdown")
+		}
+	}()
 	if tlsCfg != nil {
 		s.TLSConfig = tlsCfg
 		err = s.ServeTLS(l, "", "")
 	} else {
 		err = s.Serve(l)
 	}
-	if err != nil {
+	if err != nil && err != http.ErrServerClosed {
 		Log.Fatalln("server close err:", err)
 	}
 }
@@ -411,10 +422,10 @@ func serverHandler(buf []byte) []byte {
 	if !bytes.Equal(tool.Sha256(RawData), EncryptDataVerify) {
 		return []byte("fail")
 	}
-	if _, err := RequestCacheMap.Get(EncryptDataVerify); err == nil {
+	if _, err := RequestCacheMap.Get(string(tool.Base64Encode(EncryptDataVerify))); err == nil {
 		return []byte("fail")
 	} else {
-		err := RequestCacheMap.Add(EncryptDataVerify, true, 30*time.Second, nil)
+		err := RequestCacheMap.Add(string(tool.Base64Encode(EncryptDataVerify)), true, 30*time.Second, nil)
 		if err != nil {
 			return []byte("fail")
 		}
@@ -431,27 +442,41 @@ func serverHandler(buf []byte) []byte {
 	if RawDataStructRaw.Time.Add(30 * time.Second).Before(time.Now()) {
 		return []byte("fail")
 	}
-	if !clientCacheMapAdd(IDSha256, RawDataStructRaw.RealData) {
+	if !clientCacheMapAdd(IDSha256, RawDataStructRaw.RealData, Cli.TTL) {
 		return []byte("fail")
 	}
 	return []byte("success")
 }
 
-func clientCacheMapAdd(IDSha256 []byte, d pool.Receive) bool {
+func clientCacheMapAdd(IDSha256 []byte, d pool.Receive, TTLSet int64) bool {
 	ClientLock.Lock()
 	defer ClientLock.Unlock()
 	m := ClientCacheMap[string(IDSha256)]
+	var TTL time.Duration
+	if d.TTL > 0 {
+		TTL = d.TTL
+	}
+	if TTLSet > 0 {
+		if d.TTL > time.Duration(TTLSet)*time.Second {
+			TTL = time.Duration(TTLSet) * time.Second
+		}
+	}
+	if TTL == 0 {
+		TTL = -1
+	}
+	Call := false
 	if d.Data.IPv4 != nil && len(d.Data.IPv4) > 0 {
 		for _, v := range d.Data.IPv4 {
 			if _, err := m.Get(v); err != nil {
-				err := m.Add(v, true, d.TTL, func(item cachemap.CacheItem) {
+				err := m.Add(v, true, TTL, func(item cachemap.CacheItem) {
 					GlobalChan <- struct{}{}
 				})
 				if err != nil {
 					return false
 				}
+				Call = true
 			} else {
-				err := m.SetTTL(v, d.TTL, true)
+				err := m.SetTTL(v, TTL, true)
 				if err != nil {
 					return false
 				}
@@ -461,14 +486,15 @@ func clientCacheMapAdd(IDSha256 []byte, d pool.Receive) bool {
 	if d.Data.IPv6 != nil && len(d.Data.IPv6) > 0 {
 		for _, v := range d.Data.IPv6 {
 			if _, err := m.Get(v); err != nil {
-				err := m.Add(v, true, d.TTL, func(item cachemap.CacheItem) {
+				err := m.Add(v, true, TTL, func(item cachemap.CacheItem) {
 					GlobalChan <- struct{}{}
 				})
 				if err != nil {
 					return false
 				}
+				Call = true
 			} else {
-				err := m.SetTTL(v, d.TTL, true)
+				err := m.SetTTL(v, TTL, true)
 				if err != nil {
 					return false
 				}
@@ -478,14 +504,15 @@ func clientCacheMapAdd(IDSha256 []byte, d pool.Receive) bool {
 	if d.Data.CIDRv4 != nil && len(d.Data.CIDRv4) > 0 {
 		for _, v := range d.Data.CIDRv4 {
 			if _, err := m.Get(v); err != nil {
-				err := m.Add(v, true, d.TTL, func(item cachemap.CacheItem) {
+				err := m.Add(v, true, TTL, func(item cachemap.CacheItem) {
 					GlobalChan <- struct{}{}
 				})
 				if err != nil {
 					return false
 				}
+				Call = true
 			} else {
-				err := m.SetTTL(v, d.TTL, true)
+				err := m.SetTTL(v, TTL, true)
 				if err != nil {
 					return false
 				}
@@ -495,19 +522,23 @@ func clientCacheMapAdd(IDSha256 []byte, d pool.Receive) bool {
 	if d.Data.CIDRv6 != nil && len(d.Data.CIDRv6) > 0 {
 		for _, v := range d.Data.CIDRv6 {
 			if _, err := m.Get(v); err != nil {
-				err := m.Add(v, true, d.TTL, func(item cachemap.CacheItem) {
+				err := m.Add(v, true, TTL, func(item cachemap.CacheItem) {
 					GlobalChan <- struct{}{}
 				})
 				if err != nil {
 					return false
 				}
+				Call = true
 			} else {
-				err := m.SetTTL(v, d.TTL, true)
+				err := m.SetTTL(v, TTL, true)
 				if err != nil {
 					return false
 				}
 			}
 		}
+	}
+	if Call {
+		GlobalChan <- struct{}{}
 	}
 	return true
 }
@@ -516,11 +547,6 @@ func globalRun(ctx context.Context) {
 	for {
 		select {
 		case <-GlobalChan:
-			switch len(GlobalChan) {
-			case 0:
-			default:
-				continue
-			}
 			Temp := pool.NetAddrSlice{
 				IPv4:   make([]netip.Addr, 0),
 				IPv6:   make([]netip.Addr, 0),
@@ -575,7 +601,7 @@ func globalRun(ctx context.Context) {
 			diff, change := pool.DiffNetAddrSlice(GlobalCacheMap, Temp)
 			GlobalCacheMap = Temp
 			if change {
-				AddrDo(diff)
+				Do(diff)
 			}
 		case <-ctx.Done():
 			return
@@ -583,7 +609,7 @@ func globalRun(ctx context.Context) {
 	}
 }
 
-func AddrDo(d pool.Send) {
+func Do(d pool.Send) {
 	WG := sync.WaitGroup{}
 	WG.Add(1)
 	go func() {
@@ -613,7 +639,9 @@ func AddrDo(d pool.Send) {
 					if err != nil {
 						Log.Println(fmt.Sprintf("add ip error: %s", err))
 					}
+					Log.Println(fmt.Sprintf("ipset add ip: %s", v.String()))
 				}
+				Log.Println(fmt.Sprintf("add ip: %s", v.String()))
 			}
 		}
 		if d.Del.IPv4 != nil && len(d.Add.IPv4) > 0 {
@@ -641,7 +669,9 @@ func AddrDo(d pool.Send) {
 					if err != nil {
 						Log.Println(fmt.Sprintf("add ip error: %s", err))
 					}
+					Log.Println(fmt.Sprintf("ipset del ip: %s", v.String()))
 				}
+				Log.Println(fmt.Sprintf("del ip: %s", v.String()))
 			}
 		}
 		if d.Add.CIDRv4 != nil && len(d.Add.CIDRv4) > 0 {
@@ -669,7 +699,9 @@ func AddrDo(d pool.Send) {
 					if err != nil {
 						Log.Println(fmt.Sprintf("add ip error: %s", err))
 					}
+					Log.Println(fmt.Sprintf("ipset add cidr: %s", v.String()))
 				}
+				Log.Println(fmt.Sprintf("add cidr: %s", v.String()))
 			}
 		}
 		if d.Del.CIDRv4 != nil && len(d.Del.CIDRv4) > 0 {
@@ -697,7 +729,9 @@ func AddrDo(d pool.Send) {
 					if err != nil {
 						Log.Println(fmt.Sprintf("add ip error: %s", err))
 					}
+					Log.Println(fmt.Sprintf("ipset del cidr: %s", v.String()))
 				}
+				Log.Println(fmt.Sprintf("del cidr: %s", v.String()))
 			}
 		}
 	}()
@@ -729,7 +763,9 @@ func AddrDo(d pool.Send) {
 					if err != nil {
 						Log.Println(fmt.Sprintf("add ip error: %s", err))
 					}
+					Log.Println(fmt.Sprintf("ipset add ip: %s", v.String()))
 				}
+				Log.Println(fmt.Sprintf("add ip: %s", v.String()))
 			}
 		}
 		if d.Del.IPv6 != nil && len(d.Add.IPv6) > 0 {
@@ -757,7 +793,9 @@ func AddrDo(d pool.Send) {
 					if err != nil {
 						Log.Println(fmt.Sprintf("add ip error: %s", err))
 					}
+					Log.Println(fmt.Sprintf("ipset del ip: %s", v.String()))
 				}
+				Log.Println(fmt.Sprintf("del ip: %s", v.String()))
 			}
 		}
 		if d.Add.CIDRv6 != nil && len(d.Add.CIDRv6) > 0 {
@@ -785,7 +823,9 @@ func AddrDo(d pool.Send) {
 					if err != nil {
 						Log.Println(fmt.Sprintf("add ip error: %s", err))
 					}
+					Log.Println(fmt.Sprintf("ipset add cidr: %s", v.String()))
 				}
+				Log.Println(fmt.Sprintf("add cidr: %s", v.String()))
 			}
 		}
 		if d.Del.CIDRv6 != nil && len(d.Del.CIDRv6) > 0 {
@@ -813,7 +853,9 @@ func AddrDo(d pool.Send) {
 					if err != nil {
 						Log.Println(fmt.Sprintf("add ip error: %s", err))
 					}
+					Log.Println(fmt.Sprintf("ipset del cidr: %s", v.String()))
 				}
+				Log.Println(fmt.Sprintf("del cidr: %s", v.String()))
 			}
 		}
 	}()

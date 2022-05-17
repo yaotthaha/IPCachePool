@@ -114,8 +114,8 @@ func Parse(filename string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	var configParse ConfigParse
-	var config *Config
+	configParse := &ConfigParse{}
+	config := &Config{}
 	err = json.Unmarshal(data, &configParse)
 	if err != nil {
 		return nil, err

@@ -99,3 +99,7 @@ func ECCDecrypt(data []byte, priKey []byte) ([]byte, error) {
 	}
 	return decryptData, nil
 }
+
+func Base64Encode(data []byte) []byte {
+	return []byte(base64.StdEncoding.EncodeToString(data))
+}

@@ -107,12 +107,10 @@ func (cfg *Config) ClientRun(ctx context.Context) {
 					tlsCfg.ServerName = V.Transport.TLS.SNI
 				}
 			}
+			var Do func() bool
 			switch V.Transport.Type {
 			case "tcp":
-				firstChan := make(chan struct{}, 1)
-				firstChan <- struct{}{}
-				defer close(firstChan)
-				Do := func() bool {
+				Do = func() bool {
 					var (
 						Conn interface{}
 						err  error
@@ -216,23 +214,8 @@ func (cfg *Config) ClientRun(ctx context.Context) {
 					}
 					return true
 				}
-				for {
-					select {
-					case <-ctx.Done():
-						return
-					case <-firstChan:
-						for !Do() {
-							<-time.After(2 * time.Second)
-						}
-					case <-time.After(time.Duration(V.Interval) * time.Second):
-						Do()
-					}
-				}
 			case "http":
-				firstChan := make(chan struct{}, 1)
-				firstChan <- struct{}{}
-				defer close(firstChan)
-				Do := func() bool {
+				Do = func() bool {
 					GlobalLock.RLock()
 					if !(len(GlobalData.IPv4) > 0 || len(GlobalData.IPv6) > 0 || len(GlobalData.CIDRv4) > 0 || len(GlobalData.CIDRv6) > 0) {
 						GlobalLock.RUnlock()
@@ -304,26 +287,11 @@ func (cfg *Config) ClientRun(ctx context.Context) {
 					}
 					return true
 				}
-				for {
-					select {
-					case <-ctx.Done():
-						return
-					case <-firstChan:
-						for !Do() {
-							<-time.After(2 * time.Second)
-						}
-					case <-time.After(time.Duration(V.Interval) * time.Second):
-						Do()
-					}
-				}
 			case "quic":
 				if tlsCfg == nil {
 					Log.Fatalln("quic transport need tls config")
 				} else {
-					firstChan := make(chan struct{}, 1)
-					firstChan <- struct{}{}
-					defer close(firstChan)
-					Do := func() bool {
+					Do = func() bool {
 						GlobalLock.RLock()
 						if !(len(GlobalData.IPv4) > 0 || len(GlobalData.IPv6) > 0 || len(GlobalData.CIDRv4) > 0 || len(GlobalData.CIDRv6) > 0) {
 							GlobalLock.RUnlock()
@@ -381,18 +349,26 @@ func (cfg *Config) ClientRun(ctx context.Context) {
 						}
 						return true
 					}
-					for {
+				}
+			}
+			firstChan := make(chan struct{}, 1)
+			firstChan <- struct{}{}
+			defer close(firstChan)
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-firstChan:
+					for !Do() {
+						<-time.After(2 * time.Second)
 						select {
 						case <-ctx.Done():
 							return
-						case <-firstChan:
-							for !Do() {
-								<-time.After(2 * time.Second)
-							}
-						case <-time.After(time.Duration(V.Interval) * time.Second):
-							Do()
+						default:
 						}
 					}
+				case <-time.After(time.Duration(V.Interval) * time.Second):
+					Do()
 				}
 			}
 		}(v)
@@ -426,7 +402,7 @@ func (cfg *Config) ClientRun(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			default:
-				RvChan := make(chan interface{}, 1024)
+				RvChan := make(chan []byte, 1024)
 				T := pool.NetAddrSlice{
 					IPv4:   make([]netip.Addr, 0),
 					IPv6:   make([]netip.Addr, 0),
@@ -441,11 +417,7 @@ func (cfg *Config) ClientRun(ctx context.Context) {
 					for {
 						select {
 						case d := <-RvChan:
-							dStr, ok := d.(string)
-							if !ok {
-								Log.Println(fmt.Sprintf("invalid stdout: %s", d))
-								continue
-							}
+							dStr := strings.Trim(string(d), "\n")
 							dSlice := strings.Split(dStr, "|")
 							for _, q := range dSlice {
 								if q != "" {
@@ -515,7 +487,11 @@ func (cfg *Config) ClientRun(ctx context.Context) {
 					GlobalData = T
 					GlobalLock.Unlock()
 				}
-				time.Sleep(time.Duration(Interval) * time.Second)
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(time.Duration(Interval) * time.Second):
+				}
 			}
 		}
 	}()

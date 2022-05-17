@@ -10,20 +10,18 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"sync"
 	"syscall"
 )
 
 var (
 	AppName    = "IPCachePool"
 	AppAuthor  = "Yaott"
-	AppVersion = "v0.0.1-build-2"
+	AppVersion = "v0.0.1-build-4"
 )
 
 var (
 	Ctx     context.Context
 	CtxFunc context.CancelFunc
-	RunLock = &sync.Mutex{}
 )
 
 var (
@@ -37,8 +35,8 @@ var (
 func main() {
 	flag.BoolVar(&ParamHelp, "h", false, "Show help")
 	flag.BoolVar(&ParamVersion, "v", false, "Show version")
-	flag.StringVar(&ParamMode, "mode", "", "Mode: server or client")
-	flag.StringVar(&ParamConfigFile, "config", "./config.json", "Config file")
+	flag.StringVar(&ParamMode, "m", "", "Mode: server or client")
+	flag.StringVar(&ParamConfigFile, "c", "./config.json", "Config file")
 	flag.BoolVar(&ParamGenKey, "genkey", false, "Generate key")
 	flag.Parse()
 	if ParamVersion {
@@ -94,37 +92,32 @@ func CoreRun(filename string, coreType string) {
 			Log.Println(fmt.Sprintf("read config file error: %s", err))
 			return
 		}
+		Log.Println("read config file success")
 		go SetupCloseHandler()
 		Ctx, CtxFunc = context.WithCancel(context.Background())
-		RunLock.Lock()
+		Log.Println("server running")
 		cfg.ServerRun(Ctx)
-		RunLock.Unlock()
 	case "client":
 		cfg, err := client.Parse(filename)
 		if err != nil {
 			Log.Println(fmt.Sprintf("read config file error: %s", err))
 			return
 		}
+		Log.Println("read config file success")
 		go SetupCloseHandler()
 		Ctx, CtxFunc = context.WithCancel(context.Background())
-		RunLock.Lock()
+		Log.Println("client running")
 		cfg.ClientRun(Ctx)
-		RunLock.Unlock()
 	}
 	Log.Println("Bye!!!")
 }
 
 func SetupCloseHandler() {
 	c := make(chan os.Signal, 2)
-	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+	signal.Notify(c, os.Interrupt, syscall.SIGTERM|syscall.SIGKILL)
 	go func() {
 		<-c
-		if RunLock != nil {
-			RunLock.Lock()
-			CtxFunc()
-			RunLock.Unlock()
-			os.Exit(0)
-		}
-		os.Exit(0)
+		_, _ = fmt.Fprintln(os.Stdout, "interrupted by system")
+		CtxFunc()
 	}()
 }
