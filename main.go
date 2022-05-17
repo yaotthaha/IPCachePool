@@ -17,7 +17,7 @@ import (
 var (
 	AppName    = "IPCachePool"
 	AppAuthor  = "Yaott"
-	AppVersion = "v0.0.1-build-1"
+	AppVersion = "v0.0.1-build-2"
 )
 
 var (
@@ -35,10 +35,11 @@ var (
 )
 
 func main() {
-	flag.BoolVar(&ParamHelp, "help", false, "Show help")
-	flag.BoolVar(&ParamVersion, "version", false, "Show version")
+	flag.BoolVar(&ParamHelp, "h", false, "Show help")
+	flag.BoolVar(&ParamVersion, "v", false, "Show version")
 	flag.StringVar(&ParamMode, "mode", "", "Mode: server or client")
 	flag.StringVar(&ParamConfigFile, "config", "./config.json", "Config file")
+	flag.BoolVar(&ParamGenKey, "genkey", false, "Generate key")
 	flag.Parse()
 	if ParamVersion {
 		_, _ = fmt.Fprintln(os.Stdout, fmt.Sprintf("%s %s (Build From %s)", AppName, AppVersion, AppAuthor))
