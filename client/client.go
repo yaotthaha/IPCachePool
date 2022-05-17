@@ -360,8 +360,8 @@ func (cfg *Config) ClientRun(ctx context.Context) {
 					return
 				case <-firstChan:
 					for !Do() {
-						<-time.After(2 * time.Second)
 						select {
+						case <-time.After(2 * time.Second):
 						case <-ctx.Done():
 							return
 						default:
