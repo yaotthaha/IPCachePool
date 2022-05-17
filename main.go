@@ -56,7 +56,7 @@ func main() {
 			_, _ = fmt.Fprintln(os.Stdout, fmt.Sprintf("ECC key generate error: %s", err))
 			return
 		}
-		_, _ = fmt.Fprintln(os.Stdout, fmt.Sprintf("Private Key: ==>\n%s\n<==\n Public Key: ==>\n%s\n<==\n", PriKey, PubKey))
+		_, _ = fmt.Fprintln(os.Stdout, fmt.Sprintf("Private Key: \n==>\n%s\n<==\n\nPublic Key: \n==>\n%s\n<==\n", PriKey, PubKey))
 		return
 	}
 	if ParamMode == "" {
