@@ -1,0 +1,35 @@
+{
+  "log": {
+    "file": "./log/client.log"
+  },
+  "shell": "",
+  "shell_arg": "",
+  "script": [],
+  "servers": [
+    {
+      "name": "server1",
+      "id": "server1",
+      "public_key": "",
+      "transport": {
+        "type": "tcp", // tcp, http, quic
+        "http": {
+          "host": "",
+          "path": "/"
+        },
+        "tls": {
+          "enable": false,
+          "cert": "./cert/client.crt",
+          "key": "./cert/client.key",
+          "ca": ["./cert/ca.crt"],
+          "sni": "server1",
+          "alpn": "http/1.1",
+          "verify": 0
+        }
+      },
+      "address": "",
+      "port": 0,
+      "interval": 10,
+      "ttl": 10
+    }
+  ]
+}

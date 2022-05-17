@@ -1,0 +1,55 @@
+{
+  "log": {
+    "file": "./server.log"
+  },
+  "clients": [
+    {
+      "name": "client1",
+      "id": "client1",
+      "private_key": "",
+      "ttl": 60
+    }
+  ],
+  "shell": "",
+  "shell_arg": "",
+  "port": "8080",
+  "transport": {
+    "listen": "",
+    "port": 8080,
+    "type": "tcp", // tcp, http, quic
+    "http": {
+      "path": "/"
+    },
+    "tls": {
+      "enable": true,
+      "cert": "./cert.pem",
+      "key": "./key.pem",
+      "ca": ["./ca.pem"],
+      "require_client_cert": 0,
+      "alpn": "quic-transport"
+    }
+  },
+  "scripts": {
+    "pre": [
+      {
+        "script": "./pre.js",
+        "fatal": true,
+        "return": true
+      }
+    ],
+    "post": [],
+    "ipv4add": [],
+    "ipv4del": [],
+    "ipv6add": [],
+    "ipv6del": [],
+    "cidrv4add": [],
+    "cidrv4del": [],
+    "cidrv6add": [],
+    "cidrv6del": []
+  },
+  "ipset": {
+    "enable": true,
+    "name4": "ipset_v4",
+    "name6": "ipset_v6"
+  }
+}
