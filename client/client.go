@@ -41,22 +41,21 @@ var (
 )
 
 func (cfg *Config) ClientRun(ctx context.Context) {
+	Log = log.New(os.Stdout, "", log.LstdFlags|log.Lshortfile)
 	if cfg.Log.File != "" {
 		var err error
 		LogFile, err = os.OpenFile(cfg.Log.File, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 		if err != nil {
-			log.Fatalln("open log file error:", err)
+			Log.Fatalln("open log file error:", err)
 		}
 		defer func(LogFile *os.File) {
 			err := LogFile.Close()
 			if err != nil {
-				log.Fatalln("close log file error:", err)
+				Log.Fatalln("close log file error:", err)
 			}
 		}(LogFile)
 		Log.Println("redirect log to", cfg.Log.File)
 		Log = log.New(LogFile, "", log.LstdFlags|log.Lshortfile)
-	} else {
-		Log = log.New(os.Stdout, "", log.LstdFlags|log.Lshortfile)
 	}
 	Shell = cfg.Shell
 	ShellArg = cfg.ShellArg
