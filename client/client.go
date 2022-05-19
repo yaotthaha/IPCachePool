@@ -364,7 +364,6 @@ func (cfg *Config) ClientRun(ctx context.Context) {
 						case <-time.After(2 * time.Second):
 						case <-ctx.Done():
 							return
-						default:
 						}
 					}
 				case <-time.After(time.Duration(V.Interval) * time.Second):
@@ -504,15 +503,14 @@ func GenRaw(d pool.NetAddrSlice, TTL time.Duration, pubKey string, ID string) ([
 		TTL:  TTL,
 	}
 	type RawDataStruct struct {
-		Time     time.Time
-		RealData pool.Receive
+		IDSha256    []byte
+		Verify      string
+		Time        int64
+		EncryptData []byte
 	}
-	RawData := RawDataStruct{
-		Time:     time.Now(),
-		RealData: RealData,
-	}
+	TimeStamp := time.Now().Unix()
 	buf := bytes.Buffer{}
-	err := gob.NewEncoder(&buf).Encode(RawData)
+	err := gob.NewEncoder(&buf).Encode(RealData)
 	if err != nil {
 		return nil, err
 	}
@@ -522,11 +520,15 @@ func GenRaw(d pool.NetAddrSlice, TTL time.Duration, pubKey string, ID string) ([
 	if err != nil {
 		return nil, err
 	}
-	Verify := tool.Sha256(bufBytes)
-	Raw := IDSha256
-	Raw = append(Raw, []byte("0xffffx0")...)
-	Raw = append(Raw, Verify...)
-	Raw = append(Raw, []byte("0xffffx0")...)
-	Raw = append(Raw, EncData...)
-	return Raw, nil
+	Verify := tool.Base64Encode(tool.Sha256(append(IDSha256, append([]byte(strconv.FormatInt(TimeStamp, 10)), EncData...)...)))
+	RawData := RawDataStruct{
+		IDSha256:    IDSha256,
+		Verify:      string(Verify),
+		Time:        TimeStamp,
+		EncryptData: EncData,
+	}
+	buf = bytes.Buffer{}
+	err = gob.NewEncoder(&buf).Encode(RawData)
+	base64Data := tool.Base64Encode(buf.Bytes())
+	return base64Data, nil
 }

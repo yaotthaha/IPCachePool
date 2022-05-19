@@ -27,10 +27,11 @@ import (
 )
 
 var (
-	LogFile      *os.File
-	Log          *log.Logger
-	ReadTimeout  = 20 * time.Second
-	WriteTimeout = 20 * time.Second
+	LogFile       *os.File
+	Log           *log.Logger
+	ReadTimeout   = 20 * time.Second
+	WriteTimeout  = 20 * time.Second
+	VerifyTimeout = 30 * time.Second
 )
 
 var (
@@ -82,14 +83,27 @@ func (cfg *Config) ServerRun(ctx context.Context) {
 			if err != nil && !strings.Contains(err.Error(), "exist") {
 				Log.Println(fmt.Sprintf("ipset create error: %s", err))
 				s++
+			} else {
+				Log.Println(fmt.Sprintf("ipset [%s] create success", cfg.IPSet.Name4))
 			}
 			err = ipset.Create(cfg.IPSet.Name6, "6")
 			if err != nil && !strings.Contains(err.Error(), "exist") {
 				Log.Println(fmt.Sprintf("ipset create error: %s", err))
 				s++
+			} else {
+				Log.Println(fmt.Sprintf("ipset [%s] create success", cfg.IPSet.Name6))
 			}
 			if s != 0 {
 				IPSetSupport = false
+				Log.Println("ipset not support")
+				err := ipset.Destroy(cfg.IPSet.Name4, "4")
+				if err == nil {
+					Log.Println(fmt.Sprintf("iipset [%s] destroy success", cfg.IPSet.Name4))
+				}
+				err = ipset.Destroy(cfg.IPSet.Name6, "6")
+				if err == nil {
+					Log.Println(fmt.Sprintf("ipset [%s] destroy success", cfg.IPSet.Name6))
+				}
 			} else {
 				IPSetSupport = true
 			}
@@ -106,10 +120,14 @@ func (cfg *Config) ServerRun(ctx context.Context) {
 				}
 				if v.Return {
 					Log.Println(fmt.Sprintf("run pre script [%s] error: %s , stdout: %s, stderr: %s", v.Script, err, stdout, stderr))
+				} else {
+					Log.Println(fmt.Sprintf("run pre script %s", v.Script))
 				}
 			} else {
 				if v.Return {
 					Log.Println(fmt.Sprintf("run pre script [%s] success, stdout: %s", v.Script, stdout))
+				} else {
+					Log.Println(fmt.Sprintf("run pre script %s", v.Script))
 				}
 			}
 		}
@@ -212,12 +230,30 @@ func (cfg *Config) ServerRun(ctx context.Context) {
 				}
 				if v.Return {
 					Log.Println(fmt.Sprintf("run post script [%s] error: %s , stdout: %s, stderr: %s", v.Script, err, stdout, stderr))
+				} else {
+					Log.Println(fmt.Sprintf("run post script %s", v.Script))
 				}
 			} else {
 				if v.Return {
 					Log.Println(fmt.Sprintf("run post script [%s] success, stdout: %s", v.Script, stdout))
+				} else {
+					Log.Println(fmt.Sprintf("run post script %s", v.Script))
 				}
 			}
+		}
+	}
+	if IPSetSupport {
+		err := ipset.Destroy(cfg.IPSet.Name4, "4")
+		if err != nil {
+			Log.Println(fmt.Sprintf("ipset [%s] destroy fail: %s", cfg.IPSet.Name4, err))
+		} else {
+			Log.Println(fmt.Sprintf("ipset [%s] destroy success", cfg.IPSet.Name4))
+		}
+		err = ipset.Destroy(cfg.IPSet.Name6, "6")
+		if err != nil {
+			Log.Println(fmt.Sprintf("ipset [%s] destroy fail: %s", cfg.IPSet.Name6, err))
+		} else {
+			Log.Println(fmt.Sprintf("ipset [%s] destroy success", cfg.IPSet.Name6))
 		}
 	}
 	Log.Println("server exit")
@@ -249,6 +285,7 @@ func TCPServerRun(tlsCfg *tls.Config, ctx context.Context, ListenAddr string) {
 			conn, err := l.Accept()
 			if err != nil {
 				Log.Println("accept error:", err)
+				continue
 			}
 			go func(conn net.Conn) {
 				err := conn.SetReadDeadline(time.Now().Add(ReadTimeout))
@@ -319,8 +356,6 @@ func HTTPServerRun(tlsCfg *tls.Config, ctx context.Context, ListenAddr string, H
 		err := s.Shutdown(context.Background())
 		if err != nil {
 			Log.Println("server shutdown error:", err)
-		} else {
-			Log.Println("server shutdown")
 		}
 	}()
 	if tlsCfg != nil {
@@ -358,6 +393,7 @@ func QUICServerRun(tlsCfg *tls.Config, ctx context.Context, ListenAddr string) {
 			Conn, err := l.Accept(context.Background())
 			if err != nil {
 				Log.Println("accept error:", err)
+				continue
 			}
 			go func(Conn quic.Connection) {
 				Log.Println("accept", Conn.RemoteAddr())
@@ -398,54 +434,58 @@ func serverHandler(buf []byte) []byte {
 	if len(buf) <= 0 {
 		return []byte("fail")
 	}
-	b := bytes.Split(buf, []byte("0xffffx0"))
-	if len(b) < 3 {
+	bufBase64Dec, err := tool.Base64Decode(buf)
+	if err != nil {
 		return []byte("fail")
 	}
-	IDSha256 := b[0]
-	EncryptDataVerify := b[1]
-	EncryptData := func() []byte {
-		d := make([]byte, 0)
-		for _, v := range b[2:] {
-			d = append(d, v...)
-		}
-		return d
-	}()
+	type RawDataStruct struct {
+		IDSha256    []byte
+		Verify      string
+		Time        int64
+		EncryptData []byte
+	}
+	var RawData RawDataStruct
+	err = gob.NewDecoder(bytes.NewReader(bufBase64Dec)).Decode(&RawData)
+	if err != nil {
+		return []byte("fail")
+	}
+	TimeRv := time.Unix(RawData.Time, 0)
+	IDSha256 := RawData.IDSha256
+	EncryptData := RawData.EncryptData
+	Verify := tool.Base64Encode(tool.Sha256(append(IDSha256, append([]byte(strconv.FormatInt(RawData.Time, 10)), EncryptData...)...)))
+	if !bytes.Equal(Verify, []byte(RawData.Verify)) {
+		return []byte("fail")
+	}
 	Cli, ok := ClientMap[string(IDSha256)]
 	if !ok {
 		return []byte("fail")
 	}
-	RawData, err := tool.ECCDecrypt(EncryptData, []byte(Cli.PrivateKey))
-	if err != nil {
+	if TimeRv.Add(VerifyTimeout).Before(time.Now()) {
 		return []byte("fail")
 	}
-	if !bytes.Equal(tool.Sha256(RawData), EncryptDataVerify) {
-		return []byte("fail")
-	}
-	if _, err := RequestCacheMap.Get(string(tool.Base64Encode(EncryptDataVerify))); err == nil {
+	if _, err := RequestCacheMap.Get(string(RawData.Verify)); err == nil {
 		return []byte("fail")
 	} else {
-		err := RequestCacheMap.Add(string(tool.Base64Encode(EncryptDataVerify)), true, 30*time.Second, nil)
+		err := RequestCacheMap.Add(string(RawData.Verify), nil, VerifyTimeout, nil)
 		if err != nil {
 			return []byte("fail")
 		}
 	}
-	type RawDataStruct struct {
-		Time     time.Time
-		RealData pool.Receive
-	}
-	var RawDataStructRaw RawDataStruct
-	err = gob.NewDecoder(bytes.NewReader(RawData)).Decode(&RawDataStructRaw)
+	RealDataByte, err := tool.ECCDecrypt(EncryptData, []byte(Cli.PrivateKey))
 	if err != nil {
 		return []byte("fail")
 	}
-	if RawDataStructRaw.Time.Add(30 * time.Second).Before(time.Now()) {
+	var RealData pool.Receive
+	err = gob.NewDecoder(bytes.NewReader(RealDataByte)).Decode(&RealData)
+	if err != nil {
 		return []byte("fail")
 	}
-	if !clientCacheMapAdd(IDSha256, RawDataStructRaw.RealData, Cli.TTL) {
+	rt := clientCacheMapAdd(IDSha256, RealData, Cli.TTL)
+	if rt {
+		return []byte("success")
+	} else {
 		return []byte("fail")
 	}
-	return []byte("success")
 }
 
 func clientCacheMapAdd(IDSha256 []byte, d pool.Receive, TTLSet int64) bool {
@@ -469,6 +509,7 @@ func clientCacheMapAdd(IDSha256 []byte, d pool.Receive, TTLSet int64) bool {
 		for _, v := range d.Data.IPv4 {
 			if _, err := m.Get(v); err != nil {
 				err := m.Add(v, true, TTL, func(item cachemap.CacheItem) {
+					Log.Println(fmt.Sprintf("ip [%s] expired", item.Key.(netip.Addr).String()))
 					GlobalChan <- struct{}{}
 				})
 				if err != nil {
@@ -487,6 +528,7 @@ func clientCacheMapAdd(IDSha256 []byte, d pool.Receive, TTLSet int64) bool {
 		for _, v := range d.Data.IPv6 {
 			if _, err := m.Get(v); err != nil {
 				err := m.Add(v, true, TTL, func(item cachemap.CacheItem) {
+					Log.Println(fmt.Sprintf("ip [%s] expired", item.Key.(netip.Addr).String()))
 					GlobalChan <- struct{}{}
 				})
 				if err != nil {
@@ -505,6 +547,7 @@ func clientCacheMapAdd(IDSha256 []byte, d pool.Receive, TTLSet int64) bool {
 		for _, v := range d.Data.CIDRv4 {
 			if _, err := m.Get(v); err != nil {
 				err := m.Add(v, true, TTL, func(item cachemap.CacheItem) {
+					Log.Println(fmt.Sprintf("cidr [%s] expired", item.Key.(netip.Prefix).String()))
 					GlobalChan <- struct{}{}
 				})
 				if err != nil {
@@ -523,6 +566,7 @@ func clientCacheMapAdd(IDSha256 []byte, d pool.Receive, TTLSet int64) bool {
 		for _, v := range d.Data.CIDRv6 {
 			if _, err := m.Get(v); err != nil {
 				err := m.Add(v, true, TTL, func(item cachemap.CacheItem) {
+					Log.Println(fmt.Sprintf("cidr [%s] expired", item.Key.(netip.Prefix).String()))
 					GlobalChan <- struct{}{}
 				})
 				if err != nil {
@@ -547,6 +591,11 @@ func globalRun(ctx context.Context) {
 	for {
 		select {
 		case <-GlobalChan:
+			switch len(GlobalChan) {
+			case 0:
+			default:
+				continue
+			}
 			Temp := pool.NetAddrSlice{
 				IPv4:   make([]netip.Addr, 0),
 				IPv6:   make([]netip.Addr, 0),
@@ -644,7 +693,7 @@ func Do(d pool.Send) {
 				Log.Println(fmt.Sprintf("add ip: %s", v.String()))
 			}
 		}
-		if d.Del.IPv4 != nil && len(d.Add.IPv4) > 0 {
+		if d.Del.IPv4 != nil && len(d.Del.IPv4) > 0 {
 			for _, v := range d.Del.IPv4 {
 				if CommandSlice.IPv4Del != nil && len(CommandSlice.IPv4Del) > 0 {
 					for _, s := range CommandSlice.IPv4Del {
@@ -768,7 +817,7 @@ func Do(d pool.Send) {
 				Log.Println(fmt.Sprintf("add ip: %s", v.String()))
 			}
 		}
-		if d.Del.IPv6 != nil && len(d.Add.IPv6) > 0 {
+		if d.Del.IPv6 != nil && len(d.Del.IPv6) > 0 {
 			for _, v := range d.Del.IPv6 {
 				if CommandSlice.IPv6Del != nil && len(CommandSlice.IPv6Del) > 0 {
 					for _, s := range CommandSlice.IPv6Del {

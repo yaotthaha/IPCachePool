@@ -8,6 +8,7 @@ import (
 	"github.com/ti-mo/netfilter"
 	"net"
 	"net/netip"
+	"strings"
 )
 
 var (
@@ -48,51 +49,175 @@ func Create(setName string, setType string) error {
 	return err
 }
 
-func AddAddr(setName string, ip netip.Addr) error {
-	if ip.Is4() {
-		err := Conn4.Add(setName, ipset.NewEntry(ipset.EntryIP(net.ParseIP(ip.String())), ipset.EntryCidr(uint8(ip.BitLen()))))
-		return err
-	} else if ip.Is6() {
-		err := Conn6.Add(setName, ipset.NewEntry(ipset.EntryIP(net.ParseIP(ip.String())), ipset.EntryCidr(uint8(ip.BitLen()))))
-		return err
+func AddAddr(setName string, ip ...netip.Addr) error {
+	if len(ip) > 0 {
+		Entry4 := make([]*ipset.Entry, 0)
+		Entry6 := make([]*ipset.Entry, 0)
+		for _, v := range ip {
+			e := ipset.NewEntry(ipset.EntryIP(net.ParseIP(v.String())), ipset.EntryCidr(uint8(v.BitLen())))
+			if v.Is4() {
+				Entry4 = append(Entry4, e)
+			} else if v.Is6() {
+				Entry6 = append(Entry6, e)
+			} else {
+				return errors.New("invalid ip")
+			}
+		}
+		errSlice := make([]error, 0)
+		if len(Entry4) > 0 {
+			err := Conn4.Add(setName, Entry4...)
+			if err != nil {
+				errSlice = append(errSlice, err)
+			}
+		}
+		if len(Entry6) > 0 {
+			err := Conn6.Add(setName, Entry6...)
+			if err != nil {
+				errSlice = append(errSlice, err)
+			}
+		}
+		if len(errSlice) > 0 {
+			return errors.New(func() string {
+				S := make([]string, 0)
+				for _, v := range errSlice {
+					S = append(S, v.Error())
+				}
+				return strings.Join(S, " ")
+			}())
+		} else {
+			return nil
+		}
 	} else {
-		return errors.New("invalid ip")
+		return errors.New("ip is nil")
 	}
 }
 
-func AddPrefix(setName string, cidr netip.Prefix) error {
-	if cidr.Addr().Is4() {
-		err := Conn4.Add(setName, ipset.NewEntry(ipset.EntryIP(net.ParseIP(cidr.Addr().String())), ipset.EntryCidr(uint8(cidr.Bits()))))
-		return err
-	} else if cidr.Addr().Is6() {
-		err := Conn6.Add(setName, ipset.NewEntry(ipset.EntryIP(net.ParseIP(cidr.Addr().String())), ipset.EntryCidr(uint8(cidr.Bits()))))
-		return err
+func AddPrefix(setName string, cidr ...netip.Prefix) error {
+	if len(cidr) > 0 {
+		Entry4 := make([]*ipset.Entry, 0)
+		Entry6 := make([]*ipset.Entry, 0)
+		for _, v := range cidr {
+			e := ipset.NewEntry(ipset.EntryIP(net.ParseIP(v.Addr().String())), ipset.EntryCidr(uint8(v.Bits())))
+			if v.Addr().Is4() {
+				Entry4 = append(Entry4, e)
+			} else if v.Addr().Is6() {
+				Entry6 = append(Entry6, e)
+			} else {
+				return errors.New("invalid cidr")
+			}
+		}
+		errSlice := make([]error, 0)
+		if len(Entry4) > 0 {
+			err := Conn4.Add(setName, Entry4...)
+			if err != nil {
+				errSlice = append(errSlice, err)
+			}
+		}
+		if len(Entry6) > 0 {
+			err := Conn6.Add(setName, Entry6...)
+			if err != nil {
+				errSlice = append(errSlice, err)
+			}
+		}
+		if len(errSlice) > 0 {
+			return errors.New(func() string {
+				S := make([]string, 0)
+				for _, v := range errSlice {
+					S = append(S, v.Error())
+				}
+				return strings.Join(S, " ")
+			}())
+		} else {
+			return nil
+		}
 	} else {
-		return errors.New("invalid cidr")
+		return errors.New("cidr is nil")
 	}
 }
 
-func DelAddr(setName string, ip netip.Addr) error {
-	if ip.Is4() {
-		err := Conn4.Delete(setName, ipset.NewEntry(ipset.EntryIP(net.ParseIP(ip.String())), ipset.EntryCidr(uint8(ip.BitLen()))))
-		return err
-	} else if ip.Is6() {
-		err := Conn6.Delete(setName, ipset.NewEntry(ipset.EntryIP(net.ParseIP(ip.String())), ipset.EntryCidr(uint8(ip.BitLen()))))
-		return err
+func DelAddr(setName string, ip ...netip.Addr) error {
+	if len(ip) > 0 {
+		Entry4 := make([]*ipset.Entry, 0)
+		Entry6 := make([]*ipset.Entry, 0)
+		for _, v := range ip {
+			e := ipset.NewEntry(ipset.EntryIP(net.ParseIP(v.String())), ipset.EntryCidr(uint8(v.BitLen())))
+			if v.Is4() {
+				Entry4 = append(Entry4, e)
+			} else if v.Is6() {
+				Entry6 = append(Entry6, e)
+			} else {
+				return errors.New("invalid ip")
+			}
+		}
+		errSlice := make([]error, 0)
+		if len(Entry4) > 0 {
+			err := Conn4.Delete(setName, Entry4...)
+			if err != nil {
+				errSlice = append(errSlice, err)
+			}
+		}
+		if len(Entry6) > 0 {
+			err := Conn6.Delete(setName, Entry6...)
+			if err != nil {
+				errSlice = append(errSlice, err)
+			}
+		}
+		if len(errSlice) > 0 {
+			return errors.New(func() string {
+				S := make([]string, 0)
+				for _, v := range errSlice {
+					S = append(S, v.Error())
+				}
+				return strings.Join(S, " ")
+			}())
+		} else {
+			return nil
+		}
 	} else {
-		return errors.New("invalid ip")
+		return errors.New("ip is nil")
 	}
 }
 
-func DelPrefix(setName string, cidr netip.Prefix) error {
-	if cidr.Addr().Is4() {
-		err := Conn4.Delete(setName, ipset.NewEntry(ipset.EntryIP(net.ParseIP(cidr.Addr().String())), ipset.EntryCidr(uint8(cidr.Bits()))))
-		return err
-	} else if cidr.Addr().Is6() {
-		err := Conn6.Delete(setName, ipset.NewEntry(ipset.EntryIP(net.ParseIP(cidr.Addr().String())), ipset.EntryCidr(uint8(cidr.Bits()))))
-		return err
+func DelPrefix(setName string, cidr ...netip.Prefix) error {
+	if len(cidr) > 0 {
+		Entry4 := make([]*ipset.Entry, 0)
+		Entry6 := make([]*ipset.Entry, 0)
+		for _, v := range cidr {
+			e := ipset.NewEntry(ipset.EntryIP(net.ParseIP(v.Addr().String())), ipset.EntryCidr(uint8(v.Bits())))
+			if v.Addr().Is4() {
+				Entry4 = append(Entry4, e)
+			} else if v.Addr().Is6() {
+				Entry6 = append(Entry6, e)
+			} else {
+				return errors.New("invalid cidr")
+			}
+		}
+		errSlice := make([]error, 0)
+		if len(Entry4) > 0 {
+			err := Conn4.Delete(setName, Entry4...)
+			if err != nil {
+				errSlice = append(errSlice, err)
+			}
+		}
+		if len(Entry6) > 0 {
+			err := Conn6.Delete(setName, Entry6...)
+			if err != nil {
+				errSlice = append(errSlice, err)
+			}
+		}
+		if len(errSlice) > 0 {
+			return errors.New(func() string {
+				S := make([]string, 0)
+				for _, v := range errSlice {
+					S = append(S, v.Error())
+				}
+				return strings.Join(S, " ")
+			}())
+		} else {
+			return nil
+		}
 	} else {
-		return errors.New("invalid cidr")
+		return errors.New("cidr is nil")
 	}
 }
 
@@ -152,4 +277,18 @@ func CheckAndDelPrefix(setName string, cidr netip.Prefix) error {
 		return DelPrefix(setName, cidr)
 	}
 	return nil
+}
+
+func Destroy(setName string, setType string) error {
+	var Conn *ipset.Conn
+	switch setType {
+	case "4":
+		Conn = Conn4
+	case "6":
+		Conn = Conn6
+	default:
+		return errors.New("set type must be 4 or 6")
+	}
+	err := Conn.Destroy(setName)
+	return err
 }
