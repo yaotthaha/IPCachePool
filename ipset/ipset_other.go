@@ -54,3 +54,7 @@ func CheckAndDelAddr(setName string, ip netip.Addr) error {
 func CheckAndDelPrefix(setName string, cidr netip.Prefix) error {
 	return errors.New("not support")
 }
+
+func Destroy(setName string, setType string) error {
+	return errors.New("not support")
+}

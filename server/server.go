@@ -284,17 +284,20 @@ func TCPServerRun(tlsCfg *tls.Config, ctx context.Context, ListenAddr string) {
 		default:
 			conn, err := l.Accept()
 			if err != nil {
+				if strings.Contains(err.Error(), "use of closed network connection") {
+					return
+				}
 				Log.Println("accept error:", err)
 				continue
 			}
 			go func(conn net.Conn) {
 				err := conn.SetReadDeadline(time.Now().Add(ReadTimeout))
 				if err != nil {
-					Log.Println("set read deadline error:", err)
+					Log.Println(fmt.Sprintf("%s set read deadline error: %s", conn.RemoteAddr(), err))
 				}
 				err = conn.SetWriteDeadline(time.Now().Add(WriteTimeout))
 				if err != nil {
-					Log.Println("set write deadline error:", err)
+					Log.Println(fmt.Sprintf("%s set write deadline error: %s", conn.RemoteAddr(), err))
 				}
 				defer func(conn net.Conn) {
 					_ = conn.Close()
@@ -302,14 +305,14 @@ func TCPServerRun(tlsCfg *tls.Config, ctx context.Context, ListenAddr string) {
 				Log.Println("accept", conn.RemoteAddr())
 				buf, err := io.ReadAll(conn)
 				if err != nil {
-					Log.Println("read error:", err)
+					Log.Println(fmt.Sprintf("%s read error: %s", conn.RemoteAddr(), err))
 				}
-				Log.Println("read success")
+				Log.Println(fmt.Sprintf("%s read success", conn.RemoteAddr()))
 				rt := serverHandler(buf)
 				if rt != nil && len(rt) > 0 {
 					_, err := conn.Write(rt)
 					if err != nil {
-						Log.Println("write error:", err)
+						Log.Println(fmt.Sprintf("%s write error: %s", conn.RemoteAddr(), err))
 					}
 				}
 			}(conn)
@@ -333,20 +336,20 @@ func HTTPServerRun(tlsCfg *tls.Config, ctx context.Context, ListenAddr string, H
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			Log.Println("accept", r.RemoteAddr)
 			if r.URL.Path != HTTPCfg.Path {
-				Log.Println("path not match", r.URL.Path)
+				Log.Println(fmt.Sprintf("%s path not match: %s", r.RemoteAddr, r.URL.Path))
 				return
 			}
 			buf, err := ioutil.ReadAll(r.Body)
 			if err != nil {
-				Log.Println("read error:", err)
+				Log.Println(fmt.Sprintf("%s read error: %s", r.RemoteAddr, err))
 				return
 			}
-			Log.Println("read success")
+			Log.Println(fmt.Sprintf("%s read success", r.RemoteAddr))
 			rt := serverHandler(buf)
 			if rt != nil && len(rt) > 0 {
 				_, err := w.Write(rt)
 				if err != nil {
-					Log.Println("write error:", err)
+					Log.Println(fmt.Sprintf("%s write error: %s", r.RemoteAddr, err))
 				}
 			}
 		}),
@@ -399,27 +402,27 @@ func QUICServerRun(tlsCfg *tls.Config, ctx context.Context, ListenAddr string) {
 				Log.Println("accept", Conn.RemoteAddr())
 				stream, err := Conn.OpenStreamSync(context.Background())
 				if err != nil {
-					Log.Println("open stream error:", err)
+					Log.Println(fmt.Sprintf("%s open stream error: %s", Conn.RemoteAddr(), err))
 					return
 				}
 				err = stream.SetReadDeadline(time.Now().Add(ReadTimeout))
 				if err != nil {
-					Log.Println("set read deadline error:", err)
+					Log.Println(fmt.Sprintf("%s set read deadline error: %s", Conn.RemoteAddr(), err))
 				}
 				err = stream.SetWriteDeadline(time.Now().Add(WriteTimeout))
 				if err != nil {
-					Log.Println("set write deadline error:", err)
+					Log.Println(fmt.Sprintf("%s set write deadline error: %s", Conn.RemoteAddr(), err))
 				}
 				buf, err := io.ReadAll(stream)
 				if err != nil {
-					Log.Println("read error:", err)
+					Log.Println(fmt.Sprintf("%s read error: %s", Conn.RemoteAddr(), err))
 				}
-				Log.Println("read success")
+				Log.Println(fmt.Sprintf("%s read success", Conn.RemoteAddr()))
 				rt := serverHandler(buf)
 				if rt != nil && len(rt) > 0 {
 					_, err := stream.Write(rt)
 					if err != nil {
-						Log.Println("write error:", err)
+						Log.Println(fmt.Sprintf("%s write error: %s", Conn.RemoteAddr(), err))
 					}
 				}
 			}(Conn)
