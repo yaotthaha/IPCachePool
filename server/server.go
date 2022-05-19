@@ -61,6 +61,7 @@ func (cfg *Config) ServerRun(ctx context.Context) {
 				log.Fatalln("close log file error:", err)
 			}
 		}(LogFile)
+		Log.Println("redirect log to", cfg.LogFile)
 		Log = log.New(LogFile, "", log.LstdFlags|log.Lshortfile)
 	} else {
 		Log = log.New(os.Stdout, "", log.LstdFlags|log.Lshortfile)
