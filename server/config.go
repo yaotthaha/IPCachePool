@@ -238,6 +238,7 @@ func Parse(filename string) (*Config, error) {
 	} else {
 		config.ShellArg = "-c"
 	}
+	config.Scripts = configParse.Scripts
 	if configParse.IPSet.Enable {
 		if configParse.IPSet.Name4 == "" {
 			configParse.IPSet.Name4 = "IPCachePool_IPv4"

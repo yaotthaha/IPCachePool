@@ -16,7 +16,7 @@ import (
 var (
 	AppName    = "IPCachePool"
 	AppAuthor  = "Yaott"
-	AppVersion = "v0.0.1-build-6"
+	AppVersion = "v0.0.1-build-7"
 )
 
 var (
@@ -83,6 +83,7 @@ func main() {
 
 func CoreRun(filename string, coreType string) {
 	Log := log.New(os.Stdout, "", log.Ldate|log.Ltime|log.Lshortfile)
+	Log.Println(fmt.Sprintf("%s %s (Build From %s)", AppName, AppVersion, AppAuthor))
 	Log.Println(fmt.Sprintf("run mode: %s", coreType))
 	Log.Println(fmt.Sprintf("read config file: %s", filename))
 	switch coreType {
