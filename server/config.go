@@ -19,7 +19,8 @@ type ConfigParse struct {
 }
 
 type ConfigParseLog struct {
-	File string `json:"file"`
+	File    string `json:"file"`
+	MoreMsg bool   `json:"more_msg"`
 }
 
 type ConfigParseIPSet struct {
@@ -30,15 +31,17 @@ type ConfigParseIPSet struct {
 
 type ConfigParseClient struct {
 	Name       string `json:"name"`
-	ID         string `json:"id"`
+	ClientID   string `json:"client_id"`
 	PrivateKey string `json:"private_key"`
 	TTL        int64  `json:"ttl"`
 }
 
 type ConfigParseScriptBasic struct {
-	Script string `json:"script"`
-	Fatal  bool   `json:"fatal"`
-	Return bool   `json:"return"`
+	Shell    string `json:"shell"`
+	ShellArg string `json:"shell_arg"`
+	Script   string `json:"script"`
+	Fatal    bool   `json:"fatal"`
+	Return   bool   `json:"return"`
 }
 
 type ConfigParseScript struct {
@@ -57,7 +60,6 @@ type ConfigParseScript struct {
 type ConfigParseTransport struct {
 	Listen string                   `json:"listen"`
 	Port   uint16                   `json:"port"`
-	Type   string                   `json:"type"`
 	HTTP   ConfigParseTransportHTTP `json:"http"`
 	TLS    ConfigParseTransportTLS  `json:"tls"`
 }
@@ -71,7 +73,8 @@ type ConfigParseTransportTLS struct {
 	Cert              string   `json:"cert"`
 	Key               string   `json:"key"`
 	CA                []string `json:"ca"`
-	RequireClientCert int      `json:"require_client_cert"`
+	IgnoreVerify      bool     `json:"ignore_verify"`
+	RequireClientCert uint     `json:"require_client_cert"`
 	ALPN              string   `json:"alpn"`
 }
 
@@ -81,7 +84,6 @@ type ConfigParseTransportTLS struct {
 type ConfigTransport struct {
 	Listen string
 	Port   uint16
-	Type   string
 	HTTP   ConfigTransportHTTP
 	TLS    ConfigTransportTLS
 }
@@ -95,12 +97,13 @@ type ConfigTransportTLS struct {
 	Cert              []byte
 	Key               []byte
 	CA                [][]byte
-	RequireClientCert int
+	IgnoreVerify      bool
+	RequireClientCert uint
 	ALPN              string
 }
 
 type Config struct {
-	LogFile   string
+	Log       ConfigParseLog
 	Clients   []ConfigParseClient
 	Scripts   ConfigParseScript
 	IPSet     ConfigParseIPSet
@@ -120,7 +123,7 @@ func Parse(filename string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	config.LogFile = configParse.Log.File
+	config.Log = configParse.Log
 	if len(configParse.Clients) > 0 {
 		config.Clients = make([]ConfigParseClient, 0)
 		T1 := make(map[string]int)
@@ -131,17 +134,17 @@ func Parse(filename string) (*Config, error) {
 			} else {
 				T1[v.Name]++
 			}
-			if _, ok := T2[v.ID]; ok {
-				return nil, fmt.Errorf("client id %s is not unique", v.ID)
+			if _, ok := T2[v.ClientID]; ok {
+				return nil, fmt.Errorf("client id %s is not unique", v.ClientID)
 			} else {
-				T2[v.ID]++
+				T2[v.ClientID]++
 			}
 			if v.PrivateKey == "" {
 				return nil, fmt.Errorf("client %s has no private key", v.Name)
 			}
 			config.Clients = append(config.Clients, ConfigParseClient{
 				Name:       v.Name,
-				ID:         v.ID,
+				ClientID:   v.ClientID,
 				PrivateKey: v.PrivateKey,
 				TTL:        v.TTL,
 			})
@@ -159,72 +162,51 @@ func Parse(filename string) (*Config, error) {
 	} else {
 		return nil, errors.New("no transport port")
 	}
-	switch configParse.Transport.Type {
-	case "tcp":
-		config.Transport.Type = "tcp"
-	case "http":
-		config.Transport.Type = "http"
-		if configParse.Transport.HTTP.Path != "" {
-			if configParse.Transport.HTTP.Path[0] != '/' {
-				configParse.Transport.HTTP.Path = "/" + configParse.Transport.HTTP.Path
-			} else {
-				config.Transport.HTTP.Path = configParse.Transport.HTTP.Path
-			}
+	if configParse.Transport.HTTP.Path != "" {
+		if configParse.Transport.HTTP.Path[0] != '/' {
+			configParse.Transport.HTTP.Path = "/" + configParse.Transport.HTTP.Path
 		} else {
-			config.Transport.HTTP.Path = "/"
+			config.Transport.HTTP.Path = configParse.Transport.HTTP.Path
 		}
-	case "quic":
-		config.Transport.Type = "quic"
-	default:
-		return nil, errors.New("no transport type supported")
+	} else {
+		config.Transport.HTTP.Path = "/"
 	}
 	if configParse.Transport.TLS.Enable {
 		config.Transport.TLS.Enable = true
-		if configParse.Transport.TLS.Cert != "" {
+		if configParse.Transport.TLS.Cert != "" && configParse.Transport.TLS.Key != "" {
 			config.Transport.TLS.Cert, err = ioutil.ReadFile(configParse.Transport.TLS.Cert)
 			if err != nil {
 				return nil, errors.New("no transport tls cert: " + err.Error())
 			}
-		} else {
-			return nil, errors.New("no transport tls cert")
-		}
-		if configParse.Transport.TLS.Key != "" {
 			config.Transport.TLS.Key, err = ioutil.ReadFile(configParse.Transport.TLS.Key)
 			if err != nil {
 				return nil, errors.New("no transport tls key: " + err.Error())
 			}
 		} else {
-			return nil, errors.New("no transport tls key")
+			return nil, errors.New("no transport tls cert or(and) key")
 		}
 		if configParse.Transport.TLS.CA != nil && len(configParse.Transport.TLS.CA) > 0 {
-			config.Transport.TLS.CA = make([][]byte, 0)
+			CAPool := make([][]byte, 0)
 			for _, C := range configParse.Transport.TLS.CA {
 				if C != "" {
 					CA, err := ioutil.ReadFile(C)
 					if err != nil {
 						return nil, errors.New("no transport tls ca: " + err.Error())
 					}
-					config.Transport.TLS.CA = append(config.Transport.TLS.CA, CA)
+					CAPool = append(config.Transport.TLS.CA, CA)
 				}
 			}
-			if len(config.Transport.TLS.CA) <= 0 {
-				return nil, errors.New("no transport tls ca")
+			if len(CAPool) > 0 {
+				config.Transport.TLS.CA = CAPool
 			}
-		} else {
-			return nil, errors.New("no transport tls ca")
 		}
 		config.Transport.TLS.RequireClientCert = configParse.Transport.TLS.RequireClientCert
-		switch configParse.Transport.Type {
-		case "tcp":
-		case "http":
-		case "quic":
-			if configParse.Transport.TLS.ALPN != "" {
-				config.Transport.TLS.ALPN = configParse.Transport.TLS.ALPN
-			} else {
-				config.Transport.TLS.ALPN = "IPCachePool-QUIC"
-			}
-		default:
+		if configParse.Transport.TLS.ALPN != "" {
+			config.Transport.TLS.ALPN = configParse.Transport.TLS.ALPN
+		} else {
+			config.Transport.TLS.ALPN = "IPCachePool"
 		}
+		config.Transport.TLS.IgnoreVerify = configParse.Transport.TLS.IgnoreVerify
 	} else {
 		config.Transport.TLS.Enable = false
 	}
@@ -240,13 +222,19 @@ func Parse(filename string) (*Config, error) {
 	}
 	config.Scripts = configParse.Scripts
 	if configParse.IPSet.Enable {
-		if configParse.IPSet.Name4 == "" {
-			configParse.IPSet.Name4 = "IPCachePool_IPv4"
+		s := 0
+		if configParse.IPSet.Name4 != "" {
+			config.IPSet.Name4 = configParse.IPSet.Name4
+			s++
 		}
-		if configParse.IPSet.Name6 == "" {
-			configParse.IPSet.Name6 = "IPCachePool_IPv6"
+		if configParse.IPSet.Name6 != "" {
+			config.IPSet.Name6 = configParse.IPSet.Name6
+			s++
 		}
-		config.IPSet = configParse.IPSet
+		if s == 0 {
+			return nil, errors.New("no ipset name")
+		}
+		config.IPSet.Enable = configParse.IPSet.Enable
 	} else {
 		config.IPSet.Enable = false
 	}

@@ -15,30 +15,32 @@ type ConfigParse struct {
 }
 
 type ConfigParseLog struct {
-	File string `json:"file"`
+	File    string `json:"file"`
+	MoreMsg bool   `json:"more_msg"`
 }
 
 type ConfigParseScriptBasic struct {
-	Script string `json:"script"`
-	Fatal  bool   `json:"fatal"`
-	Return bool   `json:"return"`
+	Shell    string `json:"shell"`
+	ShellArg string `json:"shell_arg"`
+	Script   string `json:"script"`
+	Fatal    bool   `json:"fatal"`
+	Return   bool   `json:"return"`
 }
 
 type ConfigParseServer struct {
 	Name      string                     `json:"name"`
-	ID        string                     `json:"id"`
+	ClientID  string                     `json:"client_id"`
 	PublicKey string                     `json:"public_key"`
 	Interval  uint                       `json:"interval"`
 	TTL       int                        `json:"ttl"`
 	Transport ConfigParseServerTransport `json:"transport"`
-	Address   string                     `json:"address"`
-	Port      uint16                     `json:"port"`
 }
 
 type ConfigParseServerTransport struct {
-	Type string                         `json:"type"`
-	HTTP ConfigParseServerTransportHTTP `json:"http"`
-	TLS  ConfigParseServerTransportTLS  `json:"tls"`
+	Address string                         `json:"address"`
+	Port    uint16                         `json:"port"`
+	HTTP    ConfigParseServerTransportHTTP `json:"http"`
+	TLS     ConfigParseServerTransportTLS  `json:"tls"`
 }
 
 type ConfigParseServerTransportHTTP struct {
@@ -47,13 +49,13 @@ type ConfigParseServerTransportHTTP struct {
 }
 
 type ConfigParseServerTransportTLS struct {
-	Enable bool     `json:"enable"`
-	Cert   string   `json:"cert"`
-	Key    string   `json:"key"`
-	CA     []string `json:"ca"`
-	SNI    string   `json:"sni"`
-	ALPN   string   `json:"alpn"`
-	Verify int      `json:"verify"`
+	Enable       bool     `json:"enable"`
+	Cert         string   `json:"cert"`
+	Key          string   `json:"key"`
+	CA           []string `json:"ca"`
+	SNI          string   `json:"sni"`
+	ALPN         string   `json:"alpn"`
+	IgnoreVerify bool     `json:"ignore_verify"`
 }
 
 type Config struct {
@@ -66,13 +68,11 @@ type Config struct {
 
 type ConfigServer struct {
 	Name      string
-	ID        string
+	ClientID  string
 	PublicKey string
 	Interval  uint
 	TTL       int
 	Transport ConfigServerTransport
-	Address   string
-	Port      uint16
 }
 
 type ConfigServerTransportHTTP struct {
@@ -81,19 +81,20 @@ type ConfigServerTransportHTTP struct {
 }
 
 type ConfigServerTransport struct {
-	Type string
-	HTTP ConfigServerTransportHTTP
-	TLS  ConfigServerTransportTLS
+	Address string
+	Port    uint16
+	HTTP    ConfigServerTransportHTTP
+	TLS     ConfigServerTransportTLS
 }
 
 type ConfigServerTransportTLS struct {
-	Enable bool
-	Cert   []byte
-	Key    []byte
-	CA     [][]byte
-	SNI    string
-	ALPN   string
-	Verify int
+	Enable       bool
+	Cert         []byte
+	Key          []byte
+	CA           [][]byte
+	SNI          string
+	ALPN         string
+	IgnoreVerify bool
 }
 
 func Parse(filename string) (*Config, error) {
@@ -135,11 +136,11 @@ func Parse(filename string) (*Config, error) {
 				T1[v.Name]++
 				c.Name = v.Name
 			}
-			if _, ok := T2[v.ID]; ok {
+			if _, ok := T2[v.ClientID]; ok {
 				return nil, errors.New("duplicate client id")
 			} else {
-				T2[v.ID]++
-				c.ID = v.ID
+				T2[v.ClientID]++
+				c.ClientID = v.ClientID
 			}
 			if v.PublicKey == "" {
 				return nil, errors.New("no public key found")
@@ -150,36 +151,33 @@ func Parse(filename string) (*Config, error) {
 				v.Interval = 30
 			}
 			c.Interval = v.Interval
-			if v.Address == "" {
+			if v.Transport.Address == "" {
 				return nil, errors.New("no address found")
 			} else {
-				c.Address = v.Address
+				c.Transport.Address = v.Transport.Address
 			}
-			if v.Port != 0 && v.Port != 65535 {
-				c.Port = v.Port
+			if v.Transport.Port != 0 && v.Transport.Port != 65535 {
+				c.Transport.Port = v.Transport.Port
 			} else {
 				return nil, errors.New("invalid port")
 			}
-			switch v.Transport.Type {
-			case "tcp":
-				c.Transport.Type = "tcp"
-			case "http":
-				c.Transport.Type = "http"
-				if v.Transport.HTTP.Path != "" {
-					if v.Transport.HTTP.Path[0] != '/' {
-						c.Transport.HTTP.Path = "/" + v.Transport.HTTP.Path
-					} else {
-						c.Transport.HTTP.Path = v.Transport.HTTP.Path
-					}
+			if v.Transport.HTTP.Path != "" {
+				if v.Transport.HTTP.Path[0] != '/' {
+					c.Transport.HTTP.Path = "/" + v.Transport.HTTP.Path
 				} else {
-					c.Transport.HTTP.Path = "/"
+					c.Transport.HTTP.Path = v.Transport.HTTP.Path
 				}
-			case "quic":
-				c.Transport.Type = "quic"
+			} else {
+				c.Transport.HTTP.Path = "/"
+			}
+			if v.Transport.HTTP.Host != "" {
+				c.Transport.HTTP.Host = v.Transport.HTTP.Host
+			} else {
+				c.Transport.HTTP.Host = v.Transport.Address
 			}
 			if v.Transport.TLS.Enable {
 				c.Transport.TLS.Enable = true
-				if v.Transport.TLS.Cert != "" {
+				if v.Transport.TLS.Cert != "" && v.Transport.TLS.Key != "" {
 					Cert, err := ioutil.ReadFile(v.Transport.TLS.Cert)
 					if err != nil {
 						return nil, err
@@ -190,41 +188,31 @@ func Parse(filename string) (*Config, error) {
 						return nil, err
 					}
 					c.Transport.TLS.Key = Key
-					CAPool := make([][]byte, 0)
-					for _, C := range v.Transport.TLS.CA {
-						if C != "" {
-							CA, err := ioutil.ReadFile(C)
-							if err != nil {
-								return nil, err
-							}
-							CAPool = append(CAPool, CA)
-						}
-					}
-					c.Transport.TLS.CA = CAPool
-					if v.Transport.TLS.SNI == "" {
-						c.Transport.TLS.SNI = v.Address
-					} else {
-						c.Transport.TLS.SNI = v.Transport.TLS.SNI
-					}
-					switch v.Transport.Type {
-					case "tcp":
-					case "http":
-					case "quic":
-						if v.Transport.TLS.ALPN != "" {
-							c.Transport.TLS.ALPN = v.Transport.TLS.ALPN
-						} else {
-							c.Transport.TLS.ALPN = "IPCachePool-QUIC"
-						}
-					default:
-					}
-					switch v.Transport.TLS.Verify {
-					case 0, -1, 1:
-					default:
-						return nil, errors.New("invalid verify")
-					}
-				} else {
-					return nil, errors.New("no cert found")
 				}
+				CAPool := make([][]byte, 0)
+				for _, C := range v.Transport.TLS.CA {
+					if C != "" {
+						CA, err := ioutil.ReadFile(C)
+						if err != nil {
+							return nil, err
+						}
+						CAPool = append(CAPool, CA)
+					}
+				}
+				if CAPool != nil && len(CAPool) > 0 {
+					c.Transport.TLS.CA = CAPool
+				}
+				if v.Transport.TLS.SNI == "" {
+					c.Transport.TLS.SNI = v.Transport.Address
+				} else {
+					c.Transport.TLS.SNI = v.Transport.TLS.SNI
+				}
+				if v.Transport.TLS.ALPN != "" {
+					c.Transport.TLS.ALPN = v.Transport.TLS.ALPN
+				} else {
+					c.Transport.TLS.ALPN = "IPCachePool"
+				}
+				c.Transport.TLS.IgnoreVerify = v.Transport.TLS.IgnoreVerify
 			} else {
 				c.Transport.TLS.Enable = false
 			}

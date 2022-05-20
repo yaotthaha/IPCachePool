@@ -1,6 +1,7 @@
 {
   "log": {
-    "file": "./log/client.log"
+    "file": "./log/client.log",
+    "more_msg": true
   },
   "shell": "",
   "shell_arg": "",
@@ -8,10 +9,11 @@
   "servers": [
     {
       "name": "server1",
-      "id": "server1",
+      "client_id": "server1",
       "public_key": "",
       "transport": {
-        "type": "tcp", // tcp, http, quic
+        "address": "",
+        "port": 0,
         "http": {
           "host": "",
           "path": "/"
@@ -23,11 +25,9 @@
           "ca": ["./cert/ca.crt"],
           "sni": "server1",
           "alpn": "http/1.1",
-          "verify": 0
+          "ignore_verify": false
         }
       },
-      "address": "",
-      "port": 0,
       "interval": 10,
       "ttl": 10
     }

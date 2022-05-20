@@ -7,7 +7,6 @@ import (
 	"crypto/x509"
 	"encoding/gob"
 	"fmt"
-	"github.com/lucas-clemente/quic-go"
 	"github.com/yaotthaha/IPCachePool/command"
 	"github.com/yaotthaha/IPCachePool/pool"
 	"github.com/yaotthaha/IPCachePool/tool"
@@ -29,7 +28,6 @@ import (
 var (
 	LogFile      *os.File
 	Log          *log.Logger
-	ReadTimeout  = 20 * time.Second
 	WriteTimeout = 20 * time.Second
 )
 
@@ -76,25 +74,25 @@ func (cfg *Config) ClientRun(ctx context.Context) {
 				tlsCfg = &tls.Config{}
 				tlsCfg.MinVersion = tls.VersionTLS12
 				tlsCfg.MaxVersion = tls.VersionTLS13
-				CertKey, err := tls.X509KeyPair(V.Transport.TLS.Cert, V.Transport.TLS.Key)
-				if err != nil {
-					log.Fatalln("load cert key error:", err)
+				if (V.Transport.TLS.Cert != nil && len(V.Transport.TLS.Cert) > 0) && (V.Transport.TLS.Key != nil && len(V.Transport.TLS.Key) > 0) {
+					CertKey, err := tls.X509KeyPair(V.Transport.TLS.Cert, V.Transport.TLS.Key)
+					if err != nil {
+						Log.Fatalln("load cert key error:", err)
+					}
+					tlsCfg.Certificates = []tls.Certificate{CertKey}
 				}
-				tlsCfg.Certificates = []tls.Certificate{CertKey}
-				tlsCfg.RootCAs = x509.NewCertPool()
-				for _, C := range V.Transport.TLS.CA {
-					if C != nil && len(C) > 0 {
-						tlsCfg.RootCAs.AppendCertsFromPEM(C)
+				if V.Transport.TLS.CA != nil && len(V.Transport.TLS.CA) > 0 {
+					tlsCfg.RootCAs = x509.NewCertPool()
+					for _, C := range V.Transport.TLS.CA {
+						if C != nil && len(C) > 0 {
+							tlsCfg.RootCAs.AppendCertsFromPEM(C)
+						}
 					}
 				}
-				switch V.Transport.TLS.Verify {
-				case -1:
+				if V.Transport.TLS.IgnoreVerify {
+					tlsCfg.InsecureSkipVerify = true
+				} else {
 					tlsCfg.InsecureSkipVerify = false
-				case 0:
-					tlsCfg.InsecureSkipVerify = true
-				case 1:
-					tlsCfg.InsecureSkipVerify = true
-					tlsCfg.ClientAuth = tls.RequireAndVerifyClientCert
 				}
 				if V.Transport.TLS.ALPN != "" {
 					if len(V.Transport.TLS.ALPN) > 0 {
@@ -107,249 +105,79 @@ func (cfg *Config) ClientRun(ctx context.Context) {
 					tlsCfg.ServerName = V.Transport.TLS.SNI
 				}
 			}
-			var Do func() bool
-			switch V.Transport.Type {
-			case "tcp":
-				Do = func() bool {
-					var (
-						Conn interface{}
-						err  error
-					)
-					if tlsCfg == nil {
-						Conn, err = net.Dial("tcp", net.JoinHostPort(V.Address, strconv.Itoa(int(V.Port))))
-						if err != nil {
-							log.Println(fmt.Sprintf("[%s] tcp connect to server error: %s", V.Name, err))
-							return false
-						}
-					} else {
-						Conn, err = tls.Dial("tcp", net.JoinHostPort(V.Address, strconv.Itoa(int(V.Port))), tlsCfg)
-						if err != nil {
-							log.Println(fmt.Sprintf("[%s] tcp(tls) connect to server error: %s", V.Name, err))
-							return false
-						}
-					}
-					GlobalLock.RLock()
-					if !(len(GlobalData.IPv4) > 0 || len(GlobalData.IPv6) > 0 || len(GlobalData.CIDRv4) > 0 || len(GlobalData.CIDRv6) > 0) {
-						GlobalLock.RUnlock()
-						return false
-					}
-					Data := GlobalData
+			Do := func() bool {
+				GlobalLock.RLock()
+				if !(len(GlobalData.IPv4) > 0 || len(GlobalData.IPv6) > 0 || len(GlobalData.CIDRv4) > 0 || len(GlobalData.CIDRv6) > 0) {
 					GlobalLock.RUnlock()
-					RawData, err := GenRaw(Data, time.Duration(V.TTL)*time.Second, V.PublicKey, V.ID)
-					if err != nil {
-						Log.Println(fmt.Sprintf("gen raw data error: %s", err))
-						return false
-					}
-					switch Conn.(type) {
-					case *tls.Conn:
-						C := Conn.(*tls.Conn)
-						defer func() {
-							err := C.Close()
-							if err != nil {
-								Log.Println(fmt.Sprintf("[%s] tcp(tls) close conn error: %s", V.Name, err))
-							}
-						}()
-						err := C.SetReadDeadline(time.Now().Add(ReadTimeout))
-						if err != nil {
-							Log.Println(fmt.Sprintf("[%s] tcp(tls) set read deadline error: %s", V.Name, err))
-						}
-						err = C.SetWriteDeadline(time.Now().Add(WriteTimeout))
-						if err != nil {
-							Log.Println(fmt.Sprintf("[%s] tcp(tls) set write deadline error: %s", V.Name, err))
-						}
-						_, err = C.Write(RawData)
-						if err != nil {
-							Log.Println(fmt.Sprintf("[%s] tcp(tls) write raw data error: %s", V.Name, err))
-							return false
-						}
-						buf := bytes.Buffer{}
-						_, err = io.Copy(&buf, C)
-						if err != nil {
-							Log.Println(fmt.Sprintf("[%s] tcp(tls) read raw data error: %s", V.Name, err))
-							return false
-						}
-						switch string(buf.Bytes()) {
-						case "fail":
-							Log.Println(fmt.Sprintf("[%s] tcp(tls) server send a fail message", V.Name))
-						case "success":
-							Log.Println(fmt.Sprintf("[%s] tcp(tls) server send a success message", V.Name))
-						default:
-							Log.Println(fmt.Sprintf("[%s] tcp(tls) server send a unknown message: %s", V.Name, string(buf.Bytes())))
-						}
-					case net.Conn:
-						C := Conn.(net.Conn)
-						defer func() {
-							err := C.Close()
-							if err != nil {
-								Log.Println(fmt.Sprintf("[%s] close conn error: %s", V.Name, err))
-							}
-						}()
-						err := C.SetReadDeadline(time.Now().Add(ReadTimeout))
-						if err != nil {
-							Log.Println(fmt.Sprintf("[%s] tcp set read deadline error: %s", V.Name, err))
-						}
-						err = C.SetWriteDeadline(time.Now().Add(WriteTimeout))
-						if err != nil {
-							Log.Println(fmt.Sprintf("[%s] tcp set write deadline error: %s", V.Name, err))
-						}
-						_, err = C.Write(RawData)
-						if err != nil {
-							Log.Println(fmt.Sprintf("[%s] tcp write raw data error: %s", V.Name, err))
-							return false
-						}
-						buf := bytes.Buffer{}
-						_, err = io.Copy(&buf, C)
-						if err != nil {
-							Log.Println(fmt.Sprintf("[%s] tcp read raw data error: %s", V.Name, err))
-							return false
-						}
-						switch string(buf.Bytes()) {
-						case "fail":
-							Log.Println(fmt.Sprintf("[%s] tcp server send a fail message", V.Name))
-						case "success":
-							Log.Println(fmt.Sprintf("[%s] tcp server send a success message", V.Name))
-						default:
-							Log.Println(fmt.Sprintf("[%s] tcp server send a unknown message: %s", V.Name, string(buf.Bytes())))
-						}
-					}
-					return true
+					return false
 				}
-			case "http":
-				Do = func() bool {
-					GlobalLock.RLock()
-					if !(len(GlobalData.IPv4) > 0 || len(GlobalData.IPv6) > 0 || len(GlobalData.CIDRv4) > 0 || len(GlobalData.CIDRv6) > 0) {
-						GlobalLock.RUnlock()
-						return false
-					}
-					Data := GlobalData
-					GlobalLock.RUnlock()
-					RawData, err := GenRaw(Data, time.Duration(V.TTL)*time.Second, V.PublicKey, V.ID)
-					if err != nil {
-						Log.Println(fmt.Sprintf("gen raw data error: %s", err))
-						return false
-					}
-					client := http.Client{
-						Transport: &http.Transport{
-							TLSClientConfig: tlsCfg,
-						},
-						CheckRedirect: nil,
-						Jar:           nil,
-						Timeout:       WriteTimeout,
-					}
-					req := http.Request{
-						Method: http.MethodGet,
-						URL: &url.URL{
-							Scheme: func() string {
-								if tlsCfg == nil {
-									return "http"
-								} else {
-									return "https"
-								}
-							}(),
-							Host: net.JoinHostPort(V.Address, strconv.Itoa(int(V.Port))),
-							Path: V.Transport.HTTP.Path,
-						},
-						Body: ioutil.NopCloser(bytes.NewReader(RawData)),
-						Host: func() string {
-							if V.Transport.HTTP.Host != "" {
-								return V.Transport.HTTP.Host
-							} else if V.Transport.TLS.SNI != "" {
-								return V.Transport.TLS.SNI
+				Data := GlobalData
+				GlobalLock.RUnlock()
+				RawData, err := GenRaw(Data, time.Duration(V.TTL)*time.Second, V.PublicKey, V.ClientID)
+				if err != nil {
+					Log.Println(fmt.Sprintf("gen raw data error: %s", err))
+					return false
+				}
+				client := http.Client{
+					Transport: &http.Transport{
+						TLSClientConfig: tlsCfg,
+					},
+					CheckRedirect: nil,
+					Jar:           nil,
+					Timeout:       WriteTimeout,
+				}
+				req := http.Request{
+					Method: http.MethodGet,
+					URL: &url.URL{
+						Scheme: func() string {
+							if tlsCfg == nil {
+								return "http"
 							} else {
-								return V.Address
+								return "https"
 							}
 						}(),
-					}
-					resp, err := client.Do(&req)
-					if err != nil {
-						Log.Println(fmt.Sprintf("[%s] http request error: %s", V.Name, err))
-						return false
-					}
-					defer func(Body io.ReadCloser) {
-						err := Body.Close()
-						if err != nil {
-							Log.Println(fmt.Sprintf("[%s] close conn error: %s", V.Name, err))
+						Host: net.JoinHostPort(V.Transport.Address, strconv.Itoa(int(V.Transport.Port))),
+						Path: V.Transport.HTTP.Path,
+					},
+					Body: ioutil.NopCloser(bytes.NewReader(RawData)),
+					Host: func() string {
+						if V.Transport.HTTP.Host != "" {
+							return V.Transport.HTTP.Host
+						} else if V.Transport.TLS.SNI != "" {
+							return V.Transport.TLS.SNI
+						} else {
+							return V.Transport.Address
 						}
-					}(resp.Body)
-					buf := bytes.Buffer{}
-					_, err = io.Copy(&buf, resp.Body)
+					}(),
+				}
+				resp, err := client.Do(&req)
+				if err != nil {
+					Log.Println(fmt.Sprintf("[%s] http request error: %s", V.Name, err))
+					return false
+				}
+				defer func(Body io.ReadCloser) {
+					err := Body.Close()
 					if err != nil {
-						Log.Println(fmt.Sprintf("[%s] http read response error: %s", V.Name, err))
-						return false
+						Log.Println(fmt.Sprintf("[%s] close conn error: %s", V.Name, err))
 					}
-					switch string(buf.Bytes()) {
-					case "fail":
-						Log.Println(fmt.Sprintf("[%s] http server send a fail message", V.Name))
-					case "success":
+				}(resp.Body)
+				buf := bytes.Buffer{}
+				_, err = io.Copy(&buf, resp.Body)
+				if err != nil {
+					Log.Println(fmt.Sprintf("[%s] http read response error: %s", V.Name, err))
+					return false
+				}
+				switch string(buf.Bytes()) {
+				case "fail":
+					Log.Println(fmt.Sprintf("[%s] http server send a fail message", V.Name))
+				case "success":
+					if cfg.Log.MoreMsg {
 						Log.Println(fmt.Sprintf("[%s] http server send a success message", V.Name))
-					default:
-						Log.Println(fmt.Sprintf("[%s] http server send a unknown message: %s", V.Name, string(buf.Bytes())))
 					}
-					return true
+				default:
+					Log.Println(fmt.Sprintf("[%s] http server send a unknown message: %s", V.Name, string(buf.Bytes())))
 				}
-			case "quic":
-				if tlsCfg == nil {
-					Log.Fatalln("quic transport need tls config")
-				} else {
-					Do = func() bool {
-						GlobalLock.RLock()
-						if !(len(GlobalData.IPv4) > 0 || len(GlobalData.IPv6) > 0 || len(GlobalData.CIDRv4) > 0 || len(GlobalData.CIDRv6) > 0) {
-							GlobalLock.RUnlock()
-							return false
-						}
-						Data := GlobalData
-						GlobalLock.RUnlock()
-						RawData, err := GenRaw(Data, time.Duration(V.TTL)*time.Second, V.PublicKey, V.ID)
-						if err != nil {
-							Log.Println(fmt.Sprintf("gen raw data error: %s", err))
-							return false
-						}
-						Conn, err := quic.DialAddr(net.JoinHostPort(V.Address, strconv.Itoa(int(V.Port))), tlsCfg, nil)
-						if err != nil {
-							Log.Println(fmt.Sprintf("[%s] quic dial error: %s", V.Name, err))
-							return false
-						}
-						Stream, err := Conn.AcceptStream(context.Background())
-						if err != nil {
-							Log.Println(fmt.Sprintf("[%s] quic accept stream error: %s", V.Name, err))
-							return false
-						}
-						defer func() {
-							err := Stream.Close()
-							if err != nil {
-								Log.Println(fmt.Sprintf("[%s] quic stream close error: %s", V.Name, err))
-							}
-						}()
-						err = Stream.SetReadDeadline(time.Now().Add(ReadTimeout))
-						if err != nil {
-							Log.Println(fmt.Sprintf("[%s] quic set read deadline error: %s", V.Name, err))
-						}
-						err = Stream.SetWriteDeadline(time.Now().Add(WriteTimeout))
-						if err != nil {
-							Log.Println(fmt.Sprintf("[%s] quic set write deadline error: %s", V.Name, err))
-						}
-						_, err = Stream.Write(RawData)
-						if err != nil {
-							Log.Println(fmt.Sprintf("[%s] quic write raw data error: %s", V.Name, err))
-							return false
-						}
-						buf := bytes.Buffer{}
-						_, err = io.Copy(&buf, Stream)
-						if err != nil {
-							Log.Println(fmt.Sprintf("[%s] quic read raw data error: %s", V.Name, err))
-							return false
-						}
-						switch string(buf.Bytes()) {
-						case "fail":
-							Log.Println(fmt.Sprintf("[%s] quic server send a fail message", V.Name))
-						case "success":
-							Log.Println(fmt.Sprintf("[%s] quic server send a success message", V.Name))
-						default:
-							Log.Println(fmt.Sprintf("[%s] quic server send a unknown message: %s", V.Name, string(buf.Bytes())))
-						}
-						return true
-					}
-				}
+				return true
 			}
 			firstChan := make(chan struct{}, 1)
 			firstChan <- struct{}{}
@@ -460,17 +288,32 @@ func (cfg *Config) ClientRun(ctx context.Context) {
 					w.Add(1)
 					go func(v ConfigParseScriptBasic) {
 						defer w.Done()
-						stdout, stderr, err := command.Run(Shell, ShellArg, v.Script)
+						ShellReal := Shell
+						if v.Shell != "" {
+							ShellReal = v.Shell
+						}
+						ShellArgReal := ShellArg
+						if v.ShellArg != "" {
+							ShellArgReal = v.ShellArg
+						}
+						stdout, stderr, err := command.Run(ShellReal, ShellArgReal, v.Script)
+						ScriptShow := func() string {
+							if v.Script == "" {
+								return ShellReal + " " + ShellArgReal
+							} else {
+								return v.Script
+							}
+						}()
 						if err != nil {
 							if v.Fatal {
-								Log.Fatalln(fmt.Sprintf("run script [%s] error: %s , stdout: %s, stderr: %s", v.Script, err, stdout, stderr))
+								Log.Fatalln(fmt.Sprintf("run script [%s] error: %s , stdout: %s, stderr: %s", ScriptShow, err, stdout, stderr))
 							}
 							if v.Return {
-								Log.Println(fmt.Sprintf("run script [%s] error: %s , stdout: %s, stderr: %s", v.Script, err, stdout, stderr))
+								Log.Println(fmt.Sprintf("run script [%s] error: %s , stdout: %s, stderr: %s", ScriptShow, err, stdout, stderr))
 							}
 						} else {
 							if v.Return {
-								Log.Println(fmt.Sprintf("run script [%s] success, stdout: %s", v.Script, stdout))
+								Log.Println(fmt.Sprintf("run script [%s] success, stdout: %s", ScriptShow, stdout))
 							}
 						}
 						RvChan <- stdout

@@ -10,7 +10,12 @@ type Command interface {
 }
 
 func Run(Shell, ShellArg string, Cmd string) ([]byte, []byte, error) {
-	c := exec.Command(Shell, ShellArg, Cmd)
+	var c *exec.Cmd
+	if Cmd != "" {
+		c = exec.Command(Shell, ShellArg, Cmd)
+	} else {
+		c = exec.Command(Shell, ShellArg)
+	}
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	c.Stdout = &stdout

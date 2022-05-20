@@ -1,22 +1,21 @@
 {
   "log": {
-    "file": "./server.log"
+    "file": "./server.log",
+    "more_msg": true
   },
   "clients": [
     {
       "name": "client1",
-      "id": "client1",
+      "client_id": "client1",
       "private_key": "",
       "ttl": 60
     }
   ],
   "shell": "",
   "shell_arg": "",
-  "port": "8080",
   "transport": {
     "listen": "",
     "port": 8080,
-    "type": "tcp", // tcp, http, quic
     "http": {
       "path": "/"
     },
@@ -26,12 +25,15 @@
       "key": "./key.pem",
       "ca": ["./ca.pem"],
       "require_client_cert": 0,
+      "ignore_verify": false,
       "alpn": "quic-transport"
     }
   },
   "scripts": {
     "pre": [
       {
+        "shell": "",
+        "shell_arg": "",
         "script": "./pre.js",
         "fatal": true,
         "return": true

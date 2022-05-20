@@ -7,13 +7,11 @@ import (
 	"crypto/x509"
 	"encoding/gob"
 	"fmt"
-	"github.com/lucas-clemente/quic-go"
 	"github.com/yaotthaha/IPCachePool/command"
 	"github.com/yaotthaha/IPCachePool/ipset"
 	"github.com/yaotthaha/IPCachePool/pool"
 	"github.com/yaotthaha/IPCachePool/tool"
 	"github.com/yaotthaha/cachemap"
-	"io"
 	"io/ioutil"
 	"log"
 	"net"
@@ -29,12 +27,11 @@ import (
 var (
 	LogFile       *os.File
 	Log           *log.Logger
-	ReadTimeout   = 20 * time.Second
-	WriteTimeout  = 20 * time.Second
 	VerifyTimeout = 30 * time.Second
 )
 
 var (
+	LogSettings     ConfigParseLog
 	ClientMap       map[string]ConfigParseClient
 	ClientCacheMap  map[string]cachemap.CacheMap
 	ClientLock      sync.Mutex
@@ -50,9 +47,9 @@ var (
 
 func (cfg *Config) ServerRun(ctx context.Context) {
 	Log = log.New(os.Stdout, "", log.LstdFlags|log.Lshortfile)
-	if cfg.LogFile != "" {
+	if cfg.Log.File != "" {
 		var err error
-		LogFile, err = os.OpenFile(cfg.LogFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+		LogFile, err = os.OpenFile(cfg.Log.File, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 		if err != nil {
 			Log.Fatalln("open log file error:", err)
 		}
@@ -62,13 +59,14 @@ func (cfg *Config) ServerRun(ctx context.Context) {
 				Log.Fatalln("close log file error:", err)
 			}
 		}(LogFile)
-		Log.Println("redirect log to", cfg.LogFile)
+		Log.Println("redirect log to", cfg.Log.File)
 		Log = log.New(LogFile, "", log.LstdFlags|log.Lshortfile)
 	}
+	LogSettings = cfg.Log
 	ClientMap = make(map[string]ConfigParseClient)
 	ClientCacheMap = make(map[string]cachemap.CacheMap)
 	for _, v := range cfg.Clients {
-		IDSha256 := string(tool.Sha256([]byte(v.ID)))
+		IDSha256 := string(tool.Sha256([]byte(v.ClientID)))
 		ClientMap[IDSha256] = v
 		ClientCacheMap[IDSha256] = cachemap.NewCacheMap()
 	}
@@ -78,31 +76,48 @@ func (cfg *Config) ServerRun(ctx context.Context) {
 			Log.Println(fmt.Sprintf("ipset not support: %s", err))
 			IPSetSupport = false
 		} else {
-			s := 0
-			err = ipset.Create(cfg.IPSet.Name4, "4")
-			if err != nil && !strings.Contains(err.Error(), "exist") {
-				Log.Println(fmt.Sprintf("ipset create error: %s", err))
-				s++
-			} else {
-				Log.Println(fmt.Sprintf("ipset [%s] create success", cfg.IPSet.Name4))
+			d4 := 0
+			d6 := 0
+			if cfg.IPSet.Name4 != "" {
+				err = ipset.Create(cfg.IPSet.Name4, "4")
+				if err != nil && !strings.Contains(err.Error(), "exist") {
+					Log.Fatalln(fmt.Sprintf("ipset [%s] create error: %s", cfg.IPSet.Name4, err))
+				} else if strings.Contains(err.Error(), "exist") {
+					Log.Println(fmt.Sprintf("ipset [%s] create error: %s", cfg.IPSet.Name4, err))
+				} else {
+					Log.Println(fmt.Sprintf("ipset [%s] create success", cfg.IPSet.Name4))
+					d4++
+				}
 			}
-			err = ipset.Create(cfg.IPSet.Name6, "6")
-			if err != nil && !strings.Contains(err.Error(), "exist") {
-				Log.Println(fmt.Sprintf("ipset create error: %s", err))
-				s++
-			} else {
-				Log.Println(fmt.Sprintf("ipset [%s] create success", cfg.IPSet.Name6))
+			if cfg.IPSet.Name6 != "" {
+				err = ipset.Create(cfg.IPSet.Name6, "6")
+				if err != nil && !strings.Contains(err.Error(), "exist") {
+					Log.Fatalln(fmt.Sprintf("ipset [%s] create error: %s", cfg.IPSet.Name6, err))
+				} else if strings.Contains(err.Error(), "exist") {
+					Log.Println(fmt.Sprintf("ipset [%s] create error: %s", cfg.IPSet.Name6, err))
+				} else {
+					Log.Println(fmt.Sprintf("ipset [%s] create success", cfg.IPSet.Name6))
+					d6++
+				}
 			}
-			if s != 0 {
+			if d4+d6 == 0 {
 				IPSetSupport = false
 				Log.Println("ipset not support")
-				err := ipset.Destroy(cfg.IPSet.Name4, "4")
-				if err == nil {
-					Log.Println(fmt.Sprintf("iipset [%s] destroy success", cfg.IPSet.Name4))
+				if d4 != 0 {
+					err := ipset.Destroy(cfg.IPSet.Name4, "4")
+					if err == nil {
+						Log.Println(fmt.Sprintf("ipset [%s] destroy success", cfg.IPSet.Name4))
+					} else {
+						Log.Println(fmt.Sprintf("ipset [%s] destroy error: %s", cfg.IPSet.Name4, err))
+					}
 				}
-				err = ipset.Destroy(cfg.IPSet.Name6, "6")
-				if err == nil {
-					Log.Println(fmt.Sprintf("ipset [%s] destroy success", cfg.IPSet.Name6))
+				if d6 != 0 {
+					err = ipset.Destroy(cfg.IPSet.Name6, "6")
+					if err == nil {
+						Log.Println(fmt.Sprintf("ipset [%s] destroy success", cfg.IPSet.Name6))
+					} else {
+						Log.Println(fmt.Sprintf("ipset [%s] destroy error: %s", cfg.IPSet.Name6, err))
+					}
 				}
 			} else {
 				IPSetSupport = true
@@ -111,23 +126,41 @@ func (cfg *Config) ServerRun(ctx context.Context) {
 	} else {
 		IPSetSupport = false
 	}
+	IPSet = cfg.IPSet
+	Shell = cfg.Shell
+	ShellArg = cfg.ShellArg
 	if cfg.Scripts.Pre != nil && len(cfg.Scripts.Pre) > 0 {
 		for _, v := range cfg.Scripts.Pre {
-			stdout, stderr, err := command.Run(cfg.Shell, cfg.ShellArg, v.Script)
+			ShellReal := Shell
+			if v.Shell != "" {
+				ShellReal = v.Shell
+			}
+			ShellArgReal := ShellArg
+			if v.ShellArg != "" {
+				ShellArgReal = v.ShellArg
+			}
+			stdout, stderr, err := command.Run(ShellReal, ShellArgReal, v.Script)
+			ScriptShow := func() string {
+				if v.Script == "" {
+					return ShellReal + " " + ShellArgReal
+				} else {
+					return v.Script
+				}
+			}()
 			if err != nil {
 				if v.Fatal {
-					Log.Fatalln(fmt.Sprintf("run pre script [%s] error: %s , stdout: %s, stderr: %s", v.Script, err, stdout, stderr))
+					Log.Fatalln(fmt.Sprintf("run pre script [%s] error: %s , stdout: %s, stderr: %s", ScriptShow, err, stdout, stderr))
 				}
 				if v.Return {
-					Log.Println(fmt.Sprintf("run pre script [%s] error: %s , stdout: %s, stderr: %s", v.Script, err, stdout, stderr))
+					Log.Println(fmt.Sprintf("run pre script [%s] error: %s , stdout: %s, stderr: %s", ScriptShow, err, stdout, stderr))
 				} else {
-					Log.Println(fmt.Sprintf("run pre script %s", v.Script))
+					Log.Println(fmt.Sprintf("run pre script %s", ScriptShow))
 				}
 			} else {
 				if v.Return {
-					Log.Println(fmt.Sprintf("run pre script [%s] success, stdout: %s", v.Script, stdout))
+					Log.Println(fmt.Sprintf("run pre script [%s] success, stdout: %s", ScriptShow, stdout))
 				} else {
-					Log.Println(fmt.Sprintf("run pre script %s", v.Script))
+					Log.Println(fmt.Sprintf("run pre script %s", ScriptShow))
 				}
 			}
 		}
@@ -143,9 +176,6 @@ func (cfg *Config) ServerRun(ctx context.Context) {
 	GlobalChan = make(chan struct{}, 1024)
 	defer close(GlobalChan)
 	CommandSlice = cfg.Scripts
-	IPSet = cfg.IPSet
-	Shell = cfg.Shell
-	ShellArg = cfg.ShellArg
 	ListenAddr := net.JoinHostPort(cfg.Transport.Listen, strconv.Itoa(int(cfg.Transport.Port)))
 	var tlsCfg *tls.Config
 	if cfg.Transport.TLS.Enable {
@@ -163,34 +193,39 @@ func (cfg *Config) ServerRun(ctx context.Context) {
 			},
 			ClientCAs: func() *x509.CertPool {
 				CertPool := x509.NewCertPool()
+				d := 0
 				for _, C := range cfg.Transport.TLS.CA {
 					if C != nil && len(C) > 0 {
 						CertPool.AppendCertsFromPEM(C)
+						d++
 					}
 				}
-				return CertPool
+				if d != 0 {
+					return CertPool
+				} else {
+					return nil
+				}
 			}(),
 			ClientAuth: func() tls.ClientAuthType {
 				switch cfg.Transport.TLS.RequireClientCert {
 				case 0:
 					return tls.NoClientCert
 				case 1:
-					return tls.RequireAnyClientCert
+					return tls.VerifyClientCertIfGiven
 				case 2:
+					return tls.RequireAnyClientCert
+				case 3:
 					return tls.RequireAndVerifyClientCert
 				default:
-					log.Fatalln("invalid require client cert:", cfg.Transport.TLS.RequireClientCert)
 					return tls.NoClientCert
 				}
 			}(),
-			InsecureSkipVerify: false,
+			InsecureSkipVerify: cfg.Transport.TLS.IgnoreVerify,
 		}
-		if cfg.Transport.Type == "quic" {
-			if tlsCfg.NextProtos != nil && len(tlsCfg.NextProtos) > 0 {
-				tlsCfg.NextProtos = append(tlsCfg.NextProtos, cfg.Transport.TLS.ALPN)
-			} else {
-				tlsCfg.NextProtos = []string{cfg.Transport.TLS.ALPN}
-			}
+		if tlsCfg.NextProtos != nil && len(tlsCfg.NextProtos) > 0 {
+			tlsCfg.NextProtos = append(tlsCfg.NextProtos, cfg.Transport.TLS.ALPN)
+		} else {
+			tlsCfg.NextProtos = []string{cfg.Transport.TLS.ALPN}
 		}
 	}
 	wg := sync.WaitGroup{}
@@ -199,125 +234,68 @@ func (cfg *Config) ServerRun(ctx context.Context) {
 		defer wg.Done()
 		globalRun(ctx)
 	}()
-	switch cfg.Transport.Type {
-	case "tcp":
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			TCPServerRun(tlsCfg, ctx, ListenAddr)
-		}()
-	case "http":
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			HTTPServerRun(tlsCfg, ctx, ListenAddr, cfg.Transport.HTTP)
-		}()
-	case "quic":
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			QUICServerRun(tlsCfg, ctx, ListenAddr)
-		}()
-	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		HTTPServerRun(tlsCfg, ctx, ListenAddr, cfg.Transport.HTTP)
+	}()
 	wg.Wait()
 	Log.Println("server close")
 	if cfg.Scripts.Post != nil && len(cfg.Scripts.Post) > 0 {
 		for _, v := range cfg.Scripts.Post {
-			stdout, stderr, err := command.Run(cfg.Shell, cfg.ShellArg, v.Script)
+			ShellReal := Shell
+			if v.Shell != "" {
+				ShellReal = v.Shell
+			}
+			ShellArgReal := ShellArg
+			if v.ShellArg != "" {
+				ShellArgReal = v.ShellArg
+			}
+			stdout, stderr, err := command.Run(ShellReal, ShellArgReal, v.Script)
+			ScriptShow := func() string {
+				if v.Script == "" {
+					return ShellReal + " " + ShellArgReal
+				} else {
+					return v.Script
+				}
+			}()
 			if err != nil {
 				if v.Fatal {
-					Log.Fatalln(fmt.Sprintf("run post script [%s] error: %s , stdout: %s, stderr: %s", v.Script, err, stdout, stderr))
+					Log.Fatalln(fmt.Sprintf("run post script [%s] error: %s , stdout: %s, stderr: %s", ScriptShow, err, stdout, stderr))
 				}
 				if v.Return {
-					Log.Println(fmt.Sprintf("run post script [%s] error: %s , stdout: %s, stderr: %s", v.Script, err, stdout, stderr))
+					Log.Println(fmt.Sprintf("run post script [%s] error: %s , stdout: %s, stderr: %s", ScriptShow, err, stdout, stderr))
 				} else {
-					Log.Println(fmt.Sprintf("run post script %s", v.Script))
+					Log.Println(fmt.Sprintf("run post script %s", ScriptShow))
 				}
 			} else {
 				if v.Return {
-					Log.Println(fmt.Sprintf("run post script [%s] success, stdout: %s", v.Script, stdout))
+					Log.Println(fmt.Sprintf("run post script [%s] success, stdout: %s", ScriptShow, stdout))
 				} else {
-					Log.Println(fmt.Sprintf("run post script %s", v.Script))
+					Log.Println(fmt.Sprintf("run post script %s", ScriptShow))
 				}
 			}
 		}
 	}
 	if IPSetSupport {
-		err := ipset.Destroy(cfg.IPSet.Name4, "4")
-		if err != nil {
-			Log.Println(fmt.Sprintf("ipset [%s] destroy fail: %s", cfg.IPSet.Name4, err))
-		} else {
-			Log.Println(fmt.Sprintf("ipset [%s] destroy success", cfg.IPSet.Name4))
+		if IPSet.Name4 != "" {
+			err := ipset.Destroy(cfg.IPSet.Name4, "4")
+			if err != nil {
+				Log.Println(fmt.Sprintf("ipset [%s] destroy fail: %s", cfg.IPSet.Name4, err))
+			} else {
+				Log.Println(fmt.Sprintf("ipset [%s] destroy success", cfg.IPSet.Name4))
+			}
 		}
-		err = ipset.Destroy(cfg.IPSet.Name6, "6")
-		if err != nil {
-			Log.Println(fmt.Sprintf("ipset [%s] destroy fail: %s", cfg.IPSet.Name6, err))
-		} else {
-			Log.Println(fmt.Sprintf("ipset [%s] destroy success", cfg.IPSet.Name6))
+		if IPSet.Name6 != "" {
+			err := ipset.Destroy(cfg.IPSet.Name6, "6")
+			if err != nil {
+				Log.Println(fmt.Sprintf("ipset [%s] destroy fail: %s", cfg.IPSet.Name6, err))
+			} else {
+				Log.Println(fmt.Sprintf("ipset [%s] destroy success", cfg.IPSet.Name6))
+			}
 		}
 	}
 	Log.Println("server exit")
-}
-
-func TCPServerRun(tlsCfg *tls.Config, ctx context.Context, ListenAddr string) {
-	Log.Println("listen on", ListenAddr, "TCP Server")
-	var l net.Listener
-	var err error
-	if tlsCfg != nil {
-		l, err = tls.Listen("tcp", ListenAddr, tlsCfg)
-	} else {
-		l, err = net.Listen("tcp", ListenAddr)
-	}
-	if err != nil {
-		Log.Fatalln("listen error:", err)
-	}
-	defer func(l net.Listener) {
-		err := l.Close()
-		if err != nil && !strings.Contains(err.Error(), "use of closed network connection") {
-			Log.Fatalln("close listener error:", err)
-		}
-	}(l)
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			conn, err := l.Accept()
-			if err != nil {
-				if strings.Contains(err.Error(), "use of closed network connection") {
-					return
-				}
-				Log.Println("accept error:", err)
-				continue
-			}
-			go func(conn net.Conn) {
-				err := conn.SetReadDeadline(time.Now().Add(ReadTimeout))
-				if err != nil {
-					Log.Println(fmt.Sprintf("%s set read deadline error: %s", conn.RemoteAddr(), err))
-				}
-				err = conn.SetWriteDeadline(time.Now().Add(WriteTimeout))
-				if err != nil {
-					Log.Println(fmt.Sprintf("%s set write deadline error: %s", conn.RemoteAddr(), err))
-				}
-				defer func(conn net.Conn) {
-					_ = conn.Close()
-				}(conn)
-				Log.Println("accept", conn.RemoteAddr())
-				buf, err := io.ReadAll(conn)
-				if err != nil {
-					Log.Println(fmt.Sprintf("%s read error: %s", conn.RemoteAddr(), err))
-				}
-				Log.Println(fmt.Sprintf("%s read success", conn.RemoteAddr()))
-				rt := serverHandler(buf)
-				if rt != nil && len(rt) > 0 {
-					_, err := conn.Write(rt)
-					if err != nil {
-						Log.Println(fmt.Sprintf("%s write error: %s", conn.RemoteAddr(), err))
-					}
-				}
-			}(conn)
-		}
-	}
 }
 
 func HTTPServerRun(tlsCfg *tls.Config, ctx context.Context, ListenAddr string, HTTPCfg ConfigTransportHTTP) {
@@ -334,7 +312,9 @@ func HTTPServerRun(tlsCfg *tls.Config, ctx context.Context, ListenAddr string, H
 	}(l)
 	s := &http.Server{
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			Log.Println("accept", r.RemoteAddr)
+			if LogSettings.MoreMsg {
+				Log.Println("accept", r.RemoteAddr)
+			}
 			if r.URL.Path != HTTPCfg.Path {
 				Log.Println(fmt.Sprintf("%s path not match: %s", r.RemoteAddr, r.URL.Path))
 				return
@@ -344,7 +324,9 @@ func HTTPServerRun(tlsCfg *tls.Config, ctx context.Context, ListenAddr string, H
 				Log.Println(fmt.Sprintf("%s read error: %s", r.RemoteAddr, err))
 				return
 			}
-			Log.Println(fmt.Sprintf("%s read success", r.RemoteAddr))
+			if LogSettings.MoreMsg {
+				Log.Println(fmt.Sprintf("%s read success", r.RemoteAddr))
+			}
 			rt := serverHandler(buf)
 			if rt != nil && len(rt) > 0 {
 				_, err := w.Write(rt)
@@ -369,64 +351,6 @@ func HTTPServerRun(tlsCfg *tls.Config, ctx context.Context, ListenAddr string, H
 	}
 	if err != nil && err != http.ErrServerClosed {
 		Log.Fatalln("server close err:", err)
-	}
-}
-
-func QUICServerRun(tlsCfg *tls.Config, ctx context.Context, ListenAddr string) {
-	if tlsCfg == nil {
-		Log.Fatalln("QUIC must support tls")
-	}
-	Log.Println("listen on", ListenAddr, "QUIC Server")
-	quicCfg := &quic.Config{}
-	l, err := quic.ListenAddr(ListenAddr, tlsCfg, quicCfg)
-	if err != nil {
-		Log.Fatalln("listen error:", err)
-	}
-	defer func(l quic.Listener) {
-		err := l.Close()
-		if err != nil {
-			Log.Fatalln("close listener error:", err)
-		}
-	}(l)
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			Conn, err := l.Accept(context.Background())
-			if err != nil {
-				Log.Println("accept error:", err)
-				continue
-			}
-			go func(Conn quic.Connection) {
-				Log.Println("accept", Conn.RemoteAddr())
-				stream, err := Conn.OpenStreamSync(context.Background())
-				if err != nil {
-					Log.Println(fmt.Sprintf("%s open stream error: %s", Conn.RemoteAddr(), err))
-					return
-				}
-				err = stream.SetReadDeadline(time.Now().Add(ReadTimeout))
-				if err != nil {
-					Log.Println(fmt.Sprintf("%s set read deadline error: %s", Conn.RemoteAddr(), err))
-				}
-				err = stream.SetWriteDeadline(time.Now().Add(WriteTimeout))
-				if err != nil {
-					Log.Println(fmt.Sprintf("%s set write deadline error: %s", Conn.RemoteAddr(), err))
-				}
-				buf, err := io.ReadAll(stream)
-				if err != nil {
-					Log.Println(fmt.Sprintf("%s read error: %s", Conn.RemoteAddr(), err))
-				}
-				Log.Println(fmt.Sprintf("%s read success", Conn.RemoteAddr()))
-				rt := serverHandler(buf)
-				if rt != nil && len(rt) > 0 {
-					_, err := stream.Write(rt)
-					if err != nil {
-						Log.Println(fmt.Sprintf("%s write error: %s", Conn.RemoteAddr(), err))
-					}
-				}
-			}(Conn)
-		}
 	}
 }
 
@@ -466,10 +390,10 @@ func serverHandler(buf []byte) []byte {
 	if TimeRv.Add(VerifyTimeout).Before(time.Now()) {
 		return []byte("fail")
 	}
-	if _, err := RequestCacheMap.Get(string(RawData.Verify)); err == nil {
+	if _, err := RequestCacheMap.Get(RawData.Verify); err == nil {
 		return []byte("fail")
 	} else {
-		err := RequestCacheMap.Add(string(RawData.Verify), nil, VerifyTimeout, nil)
+		err := RequestCacheMap.Add(RawData.Verify, nil, VerifyTimeout, nil)
 		if err != nil {
 			return []byte("fail")
 		}
@@ -662,6 +586,39 @@ func globalRun(ctx context.Context) {
 }
 
 func Do(d pool.Send) {
+	CmdRun := func(s ConfigParseScriptBasic, v string) {
+		ShellReal := Shell
+		if s.Shell != "" {
+			ShellReal = s.Shell
+		}
+		ShellArgReal := ShellArg
+		if s.ShellArg != "" {
+			ShellArgReal = s.ShellArg
+		}
+		ShellReal = strings.ReplaceAll(ShellReal, "%#{s}#%", v)
+		ShellArgReal = strings.ReplaceAll(ShellArgReal, "%#{s}#%", v)
+		c := strings.ReplaceAll(s.Script, "%#{s}#%", v)
+		stdout, stderr, err := command.Run(ShellReal, ShellArgReal, c)
+		ScriptShow := func() string {
+			if c != "" {
+				return c
+			} else {
+				return ShellReal + " " + ShellArgReal
+			}
+		}()
+		if err != nil {
+			if s.Fatal {
+				Log.Fatalln(fmt.Sprintf("run script [%s] error: %s , stdout: %s, stderr: %s", ScriptShow, err, stdout, stderr))
+			}
+			if s.Return {
+				Log.Println(fmt.Sprintf("run script [%s] error: %s , stdout: %s, stderr: %s", ScriptShow, err, stdout, stderr))
+			}
+		} else {
+			if s.Return {
+				Log.Println(fmt.Sprintf("run script [%s] success, stdout: %s", ScriptShow, stdout))
+			}
+		}
+	}
 	WG := sync.WaitGroup{}
 	WG.Add(1)
 	go func() {
@@ -670,28 +627,16 @@ func Do(d pool.Send) {
 			for _, v := range d.Add.IPv4 {
 				if CommandSlice.IPv4Add != nil && len(CommandSlice.IPv4Add) > 0 {
 					for _, s := range CommandSlice.IPv4Add {
-						c := strings.ReplaceAll(s.Script, "%s", v.String())
-						stdout, stderr, err := command.Run(Shell, ShellArg, c)
-						if err != nil {
-							if s.Fatal {
-								Log.Fatalln(fmt.Sprintf("run script [%s] error: %s , stdout: %s, stderr: %s", c, err, stdout, stderr))
-							}
-							if s.Return {
-								Log.Println(fmt.Sprintf("run script [%s] error: %s , stdout: %s, stderr: %s", c, err, stdout, stderr))
-							}
-						} else {
-							if s.Return {
-								Log.Println(fmt.Sprintf("run script [%s] success, stdout: %s", c, stdout))
-							}
-						}
+						CmdRun(s, v.String())
 					}
 				}
-				if IPSet.Enable && IPSetSupport {
+				if IPSet.Enable && IPSetSupport && IPSet.Name4 != "" {
 					err := ipset.CheckAndAddAddr(IPSet.Name4, v)
 					if err != nil {
-						Log.Println(fmt.Sprintf("add ip error: %s", err))
+						Log.Println(fmt.Sprintf("ipset add ip [%s] fail, error: %s", v.String(), err))
+					} else {
+						Log.Println(fmt.Sprintf("ipset add ip: %s", v.String()))
 					}
-					Log.Println(fmt.Sprintf("ipset add ip: %s", v.String()))
 				}
 				Log.Println(fmt.Sprintf("add ip: %s", v.String()))
 			}
@@ -700,28 +645,16 @@ func Do(d pool.Send) {
 			for _, v := range d.Del.IPv4 {
 				if CommandSlice.IPv4Del != nil && len(CommandSlice.IPv4Del) > 0 {
 					for _, s := range CommandSlice.IPv4Del {
-						c := strings.ReplaceAll(s.Script, "%s", v.String())
-						stdout, stderr, err := command.Run(Shell, ShellArg, c)
-						if err != nil {
-							if s.Fatal {
-								Log.Fatalln(fmt.Sprintf("run script [%s] error: %s , stdout: %s, stderr: %s", c, err, stdout, stderr))
-							}
-							if s.Return {
-								Log.Println(fmt.Sprintf("run script [%s] error: %s , stdout: %s, stderr: %s", c, err, stdout, stderr))
-							}
-						} else {
-							if s.Return {
-								Log.Println(fmt.Sprintf("run script [%s] success, stdout: %s", c, stdout))
-							}
-						}
+						CmdRun(s, v.String())
 					}
 				}
-				if IPSet.Enable && IPSetSupport {
+				if IPSet.Enable && IPSetSupport && IPSet.Name4 != "" {
 					err := ipset.CheckAndDelAddr(IPSet.Name4, v)
 					if err != nil {
-						Log.Println(fmt.Sprintf("add ip error: %s", err))
+						Log.Println(fmt.Sprintf("ipset del ip [%s] fail, error: %s", v.String(), err))
+					} else {
+						Log.Println(fmt.Sprintf("ipset del ip: %s", v.String()))
 					}
-					Log.Println(fmt.Sprintf("ipset del ip: %s", v.String()))
 				}
 				Log.Println(fmt.Sprintf("del ip: %s", v.String()))
 			}
@@ -730,28 +663,16 @@ func Do(d pool.Send) {
 			for _, v := range d.Add.CIDRv4 {
 				if CommandSlice.CIDRv4Add != nil && len(CommandSlice.CIDRv4Add) > 0 {
 					for _, s := range CommandSlice.CIDRv4Add {
-						c := strings.ReplaceAll(s.Script, "%s", v.String())
-						stdout, stderr, err := command.Run(Shell, ShellArg, c)
-						if err != nil {
-							if s.Fatal {
-								Log.Fatalln(fmt.Sprintf("run script [%s] error: %s , stdout: %s, stderr: %s", c, err, stdout, stderr))
-							}
-							if s.Return {
-								Log.Println(fmt.Sprintf("run script [%s] error: %s , stdout: %s, stderr: %s", c, err, stdout, stderr))
-							}
-						} else {
-							if s.Return {
-								Log.Println(fmt.Sprintf("run script [%s] success, stdout: %s", c, stdout))
-							}
-						}
+						CmdRun(s, v.String())
 					}
 				}
-				if IPSet.Enable && IPSetSupport {
+				if IPSet.Enable && IPSetSupport && IPSet.Name4 != "" {
 					err := ipset.CheckAndAddPrefix(IPSet.Name4, v)
 					if err != nil {
-						Log.Println(fmt.Sprintf("add ip error: %s", err))
+						Log.Println(fmt.Sprintf("ipset add cidr [%s] fail, error: %s", v.String(), err))
+					} else {
+						Log.Println(fmt.Sprintf("ipset add cidr: %s", v.String()))
 					}
-					Log.Println(fmt.Sprintf("ipset add cidr: %s", v.String()))
 				}
 				Log.Println(fmt.Sprintf("add cidr: %s", v.String()))
 			}
@@ -760,28 +681,16 @@ func Do(d pool.Send) {
 			for _, v := range d.Del.CIDRv4 {
 				if CommandSlice.CIDRv4Del != nil && len(CommandSlice.CIDRv4Del) > 0 {
 					for _, s := range CommandSlice.CIDRv4Del {
-						c := strings.ReplaceAll(s.Script, "%s", v.String())
-						stdout, stderr, err := command.Run(Shell, ShellArg, c)
-						if err != nil {
-							if s.Fatal {
-								Log.Fatalln(fmt.Sprintf("run script [%s] error: %s , stdout: %s, stderr: %s", c, err, stdout, stderr))
-							}
-							if s.Return {
-								Log.Println(fmt.Sprintf("run script [%s] error: %s , stdout: %s, stderr: %s", c, err, stdout, stderr))
-							}
-						} else {
-							if s.Return {
-								Log.Println(fmt.Sprintf("run script [%s] success, stdout: %s", c, stdout))
-							}
-						}
+						CmdRun(s, v.String())
 					}
 				}
-				if IPSet.Enable && IPSetSupport {
+				if IPSet.Enable && IPSetSupport && IPSet.Name4 != "" {
 					err := ipset.CheckAndDelPrefix(IPSet.Name4, v)
 					if err != nil {
-						Log.Println(fmt.Sprintf("add ip error: %s", err))
+						Log.Println(fmt.Sprintf("ipset del cidr [%s] fail, error: %s", v.String(), err))
+					} else {
+						Log.Println(fmt.Sprintf("ipset del cidr: %s", v.String()))
 					}
-					Log.Println(fmt.Sprintf("ipset del cidr: %s", v.String()))
 				}
 				Log.Println(fmt.Sprintf("del cidr: %s", v.String()))
 			}
@@ -794,28 +703,16 @@ func Do(d pool.Send) {
 			for _, v := range d.Add.IPv6 {
 				if CommandSlice.IPv6Add != nil && len(CommandSlice.IPv6Add) > 0 {
 					for _, s := range CommandSlice.IPv6Add {
-						c := strings.ReplaceAll(s.Script, "%s", v.String())
-						stdout, stderr, err := command.Run(Shell, ShellArg, c)
-						if err != nil {
-							if s.Fatal {
-								Log.Fatalln(fmt.Sprintf("run script [%s] error: %s , stdout: %s, stderr: %s", c, err, stdout, stderr))
-							}
-							if s.Return {
-								Log.Println(fmt.Sprintf("run script [%s] error: %s , stdout: %s, stderr: %s", c, err, stdout, stderr))
-							}
-						} else {
-							if s.Return {
-								Log.Println(fmt.Sprintf("run script [%s] success, stdout: %s", c, stdout))
-							}
-						}
+						CmdRun(s, v.String())
 					}
 				}
-				if IPSet.Enable && IPSetSupport {
+				if IPSet.Enable && IPSetSupport && IPSet.Name6 != "" {
 					err := ipset.CheckAndAddAddr(IPSet.Name6, v)
 					if err != nil {
-						Log.Println(fmt.Sprintf("add ip error: %s", err))
+						Log.Println(fmt.Sprintf("ipset add ip [%s] fail, error: %s", v.String(), err))
+					} else {
+						Log.Println(fmt.Sprintf("ipset add ip: %s", v.String()))
 					}
-					Log.Println(fmt.Sprintf("ipset add ip: %s", v.String()))
 				}
 				Log.Println(fmt.Sprintf("add ip: %s", v.String()))
 			}
@@ -824,28 +721,16 @@ func Do(d pool.Send) {
 			for _, v := range d.Del.IPv6 {
 				if CommandSlice.IPv6Del != nil && len(CommandSlice.IPv6Del) > 0 {
 					for _, s := range CommandSlice.IPv6Del {
-						c := strings.ReplaceAll(s.Script, "%s", v.String())
-						stdout, stderr, err := command.Run(Shell, ShellArg, c)
-						if err != nil {
-							if s.Fatal {
-								Log.Fatalln(fmt.Sprintf("run script [%s] error: %s , stdout: %s, stderr: %s", c, err, stdout, stderr))
-							}
-							if s.Return {
-								Log.Println(fmt.Sprintf("run script [%s] error: %s , stdout: %s, stderr: %s", c, err, stdout, stderr))
-							}
-						} else {
-							if s.Return {
-								Log.Println(fmt.Sprintf("run script [%s] success, stdout: %s", c, stdout))
-							}
-						}
+						CmdRun(s, v.String())
 					}
 				}
-				if IPSet.Enable && IPSetSupport {
+				if IPSet.Enable && IPSetSupport && IPSet.Name6 != "" {
 					err := ipset.CheckAndDelAddr(IPSet.Name6, v)
 					if err != nil {
-						Log.Println(fmt.Sprintf("add ip error: %s", err))
+						Log.Println(fmt.Sprintf("ipset del ip [%s] fail, error: %s", v.String(), err))
+					} else {
+						Log.Println(fmt.Sprintf("ipset del ip: %s", v.String()))
 					}
-					Log.Println(fmt.Sprintf("ipset del ip: %s", v.String()))
 				}
 				Log.Println(fmt.Sprintf("del ip: %s", v.String()))
 			}
@@ -854,28 +739,16 @@ func Do(d pool.Send) {
 			for _, v := range d.Add.CIDRv6 {
 				if CommandSlice.CIDRv6Add != nil && len(CommandSlice.CIDRv6Add) > 0 {
 					for _, s := range CommandSlice.CIDRv6Add {
-						c := strings.ReplaceAll(s.Script, "%s", v.String())
-						stdout, stderr, err := command.Run(Shell, ShellArg, c)
-						if err != nil {
-							if s.Fatal {
-								Log.Fatalln(fmt.Sprintf("run script [%s] error: %s , stdout: %s, stderr: %s", c, err, stdout, stderr))
-							}
-							if s.Return {
-								Log.Println(fmt.Sprintf("run script [%s] error: %s , stdout: %s, stderr: %s", c, err, stdout, stderr))
-							}
-						} else {
-							if s.Return {
-								Log.Println(fmt.Sprintf("run script [%s] success, stdout: %s", c, stdout))
-							}
-						}
+						CmdRun(s, v.String())
 					}
 				}
-				if IPSet.Enable && IPSetSupport {
+				if IPSet.Enable && IPSetSupport && IPSet.Name6 != "" {
 					err := ipset.CheckAndAddPrefix(IPSet.Name6, v)
 					if err != nil {
-						Log.Println(fmt.Sprintf("add ip error: %s", err))
+						Log.Println(fmt.Sprintf("ipset add cidr [%s] fail, error: %s", v.String(), err))
+					} else {
+						Log.Println(fmt.Sprintf("ipset add cidr: %s", v.String()))
 					}
-					Log.Println(fmt.Sprintf("ipset add cidr: %s", v.String()))
 				}
 				Log.Println(fmt.Sprintf("add cidr: %s", v.String()))
 			}
@@ -884,28 +757,16 @@ func Do(d pool.Send) {
 			for _, v := range d.Del.CIDRv6 {
 				if CommandSlice.CIDRv6Del != nil && len(CommandSlice.CIDRv6Del) > 0 {
 					for _, s := range CommandSlice.CIDRv6Del {
-						c := strings.ReplaceAll(s.Script, "%s", v.String())
-						stdout, stderr, err := command.Run(Shell, ShellArg, c)
-						if err != nil {
-							if s.Fatal {
-								Log.Fatalln(fmt.Sprintf("run script [%s] error: %s , stdout: %s, stderr: %s", c, err, stdout, stderr))
-							}
-							if s.Return {
-								Log.Println(fmt.Sprintf("run script [%s] error: %s , stdout: %s, stderr: %s", c, err, stdout, stderr))
-							}
-						} else {
-							if s.Return {
-								Log.Println(fmt.Sprintf("run script [%s] success, stdout: %s", c, stdout))
-							}
-						}
+						CmdRun(s, v.String())
 					}
 				}
-				if IPSet.Enable && IPSetSupport {
+				if IPSet.Enable && IPSetSupport && IPSet.Name6 != "" {
 					err := ipset.CheckAndDelPrefix(IPSet.Name6, v)
 					if err != nil {
-						Log.Println(fmt.Sprintf("add ip error: %s", err))
+						Log.Println(fmt.Sprintf("ipset del cidr [%s] fail, error: %s", v.String(), err))
+					} else {
+						Log.Println(fmt.Sprintf("ipset del cidr: %s", v.String()))
 					}
-					Log.Println(fmt.Sprintf("ipset del cidr: %s", v.String()))
 				}
 				Log.Println(fmt.Sprintf("del cidr: %s", v.String()))
 			}
