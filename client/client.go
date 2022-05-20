@@ -29,6 +29,7 @@ import (
 var (
 	LogFile      *os.File
 	Log          *log.Logger
+	LogSettings  ConfigParseLog
 	WriteTimeout = 20 * time.Second
 )
 
@@ -56,6 +57,7 @@ func (cfg *Config) ClientRun(ctx context.Context) {
 		Log.Println("redirect log to", cfg.Log.File)
 		Log = log.New(LogFile, "", log.LstdFlags|log.Lshortfile)
 	}
+	LogSettings = cfg.Log
 	Shell = cfg.Shell
 	ShellArg = cfg.ShellArg
 	serverRunWG := sync.WaitGroup{}
@@ -176,7 +178,7 @@ func (cfg *Config) ClientRun(ctx context.Context) {
 				case "fail":
 					Log.Println(fmt.Sprintf("[%s] http server send a fail message", V.Name))
 				case "success":
-					if cfg.Log.MoreMsg {
+					if LogSettings.MoreMsg {
 						Log.Println(fmt.Sprintf("[%s] http server send a success message", V.Name))
 					}
 				default:

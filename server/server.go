@@ -82,8 +82,6 @@ func (cfg *Config) ServerRun(ctx context.Context) {
 				err = ipset.Create(cfg.IPSet.Name4, "4")
 				if err != nil && !strings.Contains(err.Error(), "exist") {
 					Log.Fatalln(fmt.Sprintf("ipset [%s] create error: %s", cfg.IPSet.Name4, err))
-				} else if strings.Contains(err.Error(), "exist") {
-					Log.Println(fmt.Sprintf("ipset [%s] create error: %s", cfg.IPSet.Name4, err))
 				} else {
 					Log.Println(fmt.Sprintf("ipset [%s] create success", cfg.IPSet.Name4))
 					d4++
@@ -93,8 +91,6 @@ func (cfg *Config) ServerRun(ctx context.Context) {
 				err = ipset.Create(cfg.IPSet.Name6, "6")
 				if err != nil && !strings.Contains(err.Error(), "exist") {
 					Log.Fatalln(fmt.Sprintf("ipset [%s] create error: %s", cfg.IPSet.Name6, err))
-				} else if strings.Contains(err.Error(), "exist") {
-					Log.Println(fmt.Sprintf("ipset [%s] create error: %s", cfg.IPSet.Name6, err))
 				} else {
 					Log.Println(fmt.Sprintf("ipset [%s] create success", cfg.IPSet.Name6))
 					d6++

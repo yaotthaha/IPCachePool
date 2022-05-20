@@ -110,7 +110,7 @@ func Parse(filename string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	config.Log.File = configParse.Log.File
+	config.Log = configParse.Log
 	if configParse.Shell != "" {
 		config.Shell = configParse.Shell
 	} else {
