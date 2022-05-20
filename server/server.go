@@ -310,28 +310,42 @@ func HTTPServerRun(tlsCfg *tls.Config, ctx context.Context, ListenAddr string, H
 			Log.Fatalln("close listener error:", err)
 		}
 	}(l)
+	GetRealIP := func(r *http.Request) string {
+		if HTTPCfg.RealIPHeader != "" {
+			if r.Header.Get(HTTPCfg.RealIPHeader) != "" {
+				return r.Header.Get(HTTPCfg.RealIPHeader)
+			} else {
+				addr, _, _ := net.SplitHostPort(r.RemoteAddr)
+				return addr
+			}
+		} else {
+			addr, _, _ := net.SplitHostPort(r.RemoteAddr)
+			return addr
+		}
+	}
 	s := &http.Server{
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			RemoteAddr := GetRealIP(r)
 			if LogSettings.MoreMsg {
-				Log.Println("accept", r.RemoteAddr)
+				Log.Println("accept", RemoteAddr)
 			}
 			if r.URL.Path != HTTPCfg.Path {
-				Log.Println(fmt.Sprintf("%s path not match: %s", r.RemoteAddr, r.URL.Path))
+				Log.Println(fmt.Sprintf("%s path not match: %s", RemoteAddr, r.URL.Path))
 				return
 			}
 			buf, err := ioutil.ReadAll(r.Body)
 			if err != nil {
-				Log.Println(fmt.Sprintf("%s read error: %s", r.RemoteAddr, err))
+				Log.Println(fmt.Sprintf("%s read error: %s", RemoteAddr, err))
 				return
 			}
 			if LogSettings.MoreMsg {
-				Log.Println(fmt.Sprintf("%s read success", r.RemoteAddr))
+				Log.Println(fmt.Sprintf("%s read success", RemoteAddr))
 			}
 			rt := serverHandler(buf)
 			if rt != nil && len(rt) > 0 {
 				_, err := w.Write(rt)
 				if err != nil {
-					Log.Println(fmt.Sprintf("%s write error: %s", r.RemoteAddr, err))
+					Log.Println(fmt.Sprintf("%s write error: %s", RemoteAddr, err))
 				}
 			}
 		}),

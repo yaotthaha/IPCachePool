@@ -17,7 +17,8 @@
     "listen": "",
     "port": 8080,
     "http": {
-      "path": "/"
+      "path": "/",
+      "real_ip_header": "X-Real-IP"
     },
     "tls": {
       "enable": true,

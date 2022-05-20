@@ -65,7 +65,8 @@ type ConfigParseTransport struct {
 }
 
 type ConfigParseTransportHTTP struct {
-	Path string `json:"path"`
+	Path         string `json:"path"`
+	RealIPHeader string `json:"real_ip_header"`
 }
 
 type ConfigParseTransportTLS struct {
@@ -89,7 +90,8 @@ type ConfigTransport struct {
 }
 
 type ConfigTransportHTTP struct {
-	Path string
+	Path         string
+	RealIPHeader string
 }
 
 type ConfigTransportTLS struct {
@@ -170,6 +172,9 @@ func Parse(filename string) (*Config, error) {
 		}
 	} else {
 		config.Transport.HTTP.Path = "/"
+	}
+	if configParse.Transport.HTTP.RealIPHeader != "" {
+		config.Transport.HTTP.RealIPHeader = configParse.Transport.HTTP.RealIPHeader
 	}
 	if configParse.Transport.TLS.Enable {
 		config.Transport.TLS.Enable = true
