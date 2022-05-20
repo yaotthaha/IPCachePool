@@ -16,7 +16,7 @@ import (
 var (
 	AppName    = "IPCachePool"
 	AppAuthor  = "Yaott"
-	AppVersion = "v0.1.0-build-2"
+	AppVersion = "v0.1.0-build-3"
 )
 
 var (

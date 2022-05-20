@@ -26,7 +26,8 @@
           "sni": "server1",
           "alpn": "http/1.1",
           "ignore_verify": false
-        }
+        },
+        "http3": true
       },
       "interval": 10,
       "ttl": 10

@@ -41,6 +41,7 @@ type ConfigParseServerTransport struct {
 	Port    uint16                         `json:"port"`
 	HTTP    ConfigParseServerTransportHTTP `json:"http"`
 	TLS     ConfigParseServerTransportTLS  `json:"tls"`
+	HTTP3   bool                           `json:"http3"`
 }
 
 type ConfigParseServerTransportHTTP struct {
@@ -85,6 +86,7 @@ type ConfigServerTransport struct {
 	Port    uint16
 	HTTP    ConfigServerTransportHTTP
 	TLS     ConfigServerTransportTLS
+	HTTP3   bool
 }
 
 type ConfigServerTransportTLS struct {
@@ -216,6 +218,7 @@ func Parse(filename string) (*Config, error) {
 			} else {
 				c.Transport.TLS.Enable = false
 			}
+			c.Transport.HTTP3 = v.Transport.HTTP3
 			c.TTL = v.TTL
 			config.Servers = append(config.Servers, c)
 		}

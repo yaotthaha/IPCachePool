@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/gob"
 	"fmt"
+	"github.com/lucas-clemente/quic-go/http3"
 	"github.com/yaotthaha/IPCachePool/command"
 	"github.com/yaotthaha/IPCachePool/pool"
 	"github.com/yaotthaha/IPCachePool/tool"
@@ -119,12 +120,16 @@ func (cfg *Config) ClientRun(ctx context.Context) {
 					return false
 				}
 				client := http.Client{
-					Transport: &http.Transport{
+					Timeout: WriteTimeout,
+				}
+				if V.Transport.HTTP3 {
+					client.Transport = &http3.RoundTripper{
 						TLSClientConfig: tlsCfg,
-					},
-					CheckRedirect: nil,
-					Jar:           nil,
-					Timeout:       WriteTimeout,
+					}
+				} else {
+					client.Transport = &http.Transport{
+						TLSClientConfig: tlsCfg,
+					}
 				}
 				req := http.Request{
 					Method: http.MethodGet,
