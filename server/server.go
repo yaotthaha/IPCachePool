@@ -7,6 +7,8 @@ import (
 	"crypto/x509"
 	"encoding/gob"
 	"fmt"
+	"github.com/lucas-clemente/quic-go"
+	"github.com/lucas-clemente/quic-go/http3"
 	"github.com/yaotthaha/IPCachePool/command"
 	"github.com/yaotthaha/IPCachePool/ipset"
 	"github.com/yaotthaha/IPCachePool/pool"
@@ -28,6 +30,8 @@ var (
 	LogFile       *os.File
 	Log           *log.Logger
 	LogSettings   ConfigParseLog
+	ReadTimeout   = 30 * time.Second
+	WriteTimeout  = 30 * time.Second
 	VerifyTimeout = 30 * time.Second
 )
 
@@ -172,7 +176,6 @@ func (cfg *Config) ServerRun(ctx context.Context) {
 	GlobalChan = make(chan struct{}, 1024)
 	defer close(GlobalChan)
 	CommandSlice = cfg.Scripts
-	ListenAddr := net.JoinHostPort(cfg.Transport.Listen, strconv.Itoa(int(cfg.Transport.Port)))
 	var tlsCfg *tls.Config
 	if cfg.Transport.TLS.Enable {
 		tlsCfg = &tls.Config{
@@ -230,11 +233,30 @@ func (cfg *Config) ServerRun(ctx context.Context) {
 		defer wg.Done()
 		globalRun(ctx)
 	}()
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		HTTPServerRun(tlsCfg, ctx, ListenAddr, cfg.Transport.HTTP)
-	}()
+	if cfg.Transport.HTTP3.Enable && cfg.Transport.HTTP3.Only {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			HTTP3ServerRun(tlsCfg, ctx, cfg.Transport)
+		}()
+	} else if cfg.Transport.HTTP3.Enable && !cfg.Transport.HTTP3.Only {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			HTTPServerRun(tlsCfg, ctx, cfg.Transport)
+		}()
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			HTTP3ServerRun(tlsCfg, ctx, cfg.Transport)
+		}()
+	} else {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			HTTPServerRun(tlsCfg, ctx, cfg.Transport)
+		}()
+	}
 	wg.Wait()
 	Log.Println("server close")
 	if cfg.Scripts.Post != nil && len(cfg.Scripts.Post) > 0 {
@@ -294,22 +316,94 @@ func (cfg *Config) ServerRun(ctx context.Context) {
 	Log.Println("server exit")
 }
 
-func HTTPServerRun(tlsCfg *tls.Config, ctx context.Context, ListenAddr string, HTTPCfg ConfigTransportHTTP) {
-	Log.Println("listen on", ListenAddr, "HTTP Server")
+func HTTPServerRun(tlsCfg *tls.Config, ctx context.Context, cfg ConfigTransport) {
+	ListenAddr := net.JoinHostPort(cfg.Listen, strconv.Itoa(int(cfg.Port)))
+	Log.Println("listen on", ListenAddr, "http server")
 	l, err := net.Listen("tcp", ListenAddr)
 	if err != nil {
-		Log.Fatalln("listen error:", err)
+		Log.Fatalln("http server listen error:", err)
 	}
 	defer func(l net.Listener) {
 		err := l.Close()
 		if err != nil && !strings.Contains(err.Error(), "use of closed network connection") {
-			Log.Fatalln("close listener error:", err)
+			Log.Fatalln("http server close listener error:", err)
 		}
 	}(l)
-	GetRealIP := func(r *http.Request) string {
-		if HTTPCfg.RealIPHeader != "" {
-			if r.Header.Get(HTTPCfg.RealIPHeader) != "" {
-				return r.Header.Get(HTTPCfg.RealIPHeader)
+	server := &http.Server{
+		Handler: http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			serverHandler(w, r, cfg)
+		})),
+		ReadTimeout:  ReadTimeout,
+		WriteTimeout: WriteTimeout,
+	}
+	if tlsCfg != nil {
+		server.TLSConfig = tlsCfg
+	}
+	go func() {
+		<-ctx.Done()
+		err := server.Shutdown(context.Background())
+		if err != nil {
+			Log.Println("http server shutdown error:", err)
+		}
+	}()
+	if tlsCfg != nil {
+		err = server.ListenAndServeTLS("", "")
+	} else {
+		err = server.ListenAndServe()
+	}
+	if err != nil && err != http.ErrServerClosed {
+		Log.Fatalln("http server close err:", err)
+	}
+}
+
+func HTTP3ServerRun(tlsCfg *tls.Config, ctx context.Context, cfg ConfigTransport) {
+	ListenAddr := net.JoinHostPort(cfg.Listen, strconv.Itoa(int(cfg.Port)))
+	Log.Println("listen on", ListenAddr, "http3 server")
+	l, err := net.Listen("tcp", ListenAddr)
+	if err != nil {
+		Log.Fatalln("http3 server listen error:", err)
+	}
+	defer func(l net.Listener) {
+		err := l.Close()
+		if err != nil && !strings.Contains(err.Error(), "use of closed network connection") {
+			Log.Fatalln("http3 server close listener error:", err)
+		}
+	}(l)
+	server := &http3.Server{
+		Server: &http.Server{
+			Handler: http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				serverHandler(w, r, cfg)
+			})),
+			ReadTimeout:  ReadTimeout,
+			WriteTimeout: WriteTimeout,
+		},
+		QuicConfig: &quic.Config{},
+	}
+	if tlsCfg != nil {
+		server.TLSConfig = tlsCfg
+	}
+	go func() {
+		<-ctx.Done()
+		err := server.Shutdown(context.Background())
+		if err != nil {
+			Log.Println("http3 server shutdown error:", err)
+		}
+	}()
+	if tlsCfg != nil {
+		err = server.ListenAndServeTLS("", "")
+	} else {
+		err = server.ListenAndServe()
+	}
+	if err != nil && err != http.ErrServerClosed {
+		Log.Fatalln("http3 server close err:", err)
+	}
+}
+
+func serverHandler(w http.ResponseWriter, r *http.Request, cfg ConfigTransport) {
+	RemoteAddr := func() string {
+		if cfg.HTTP.RealIPHeader != "" {
+			if r.Header.Get(cfg.HTTP.RealIPHeader) != "" {
+				return r.Header.Get(cfg.HTTP.RealIPHeader)
 			} else {
 				addr, _, _ := net.SplitHostPort(r.RemoteAddr)
 				return addr
@@ -318,53 +412,32 @@ func HTTPServerRun(tlsCfg *tls.Config, ctx context.Context, ListenAddr string, H
 			addr, _, _ := net.SplitHostPort(r.RemoteAddr)
 			return addr
 		}
-	}
-	s := &http.Server{
-		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			RemoteAddr := GetRealIP(r)
-			if LogSettings.MoreMsg {
-				Log.Println("accept", RemoteAddr)
-			}
-			if r.URL.Path != HTTPCfg.Path {
-				Log.Println(fmt.Sprintf("%s path not match: %s", RemoteAddr, r.URL.Path))
-				return
-			}
-			buf, err := ioutil.ReadAll(r.Body)
-			if err != nil {
-				Log.Println(fmt.Sprintf("%s read error: %s", RemoteAddr, err))
-				return
-			}
-			if LogSettings.MoreMsg {
-				Log.Println(fmt.Sprintf("%s read success", RemoteAddr))
-			}
-			rt := serverHandler(buf)
-			if rt != nil && len(rt) > 0 {
-				_, err := w.Write(rt)
-				if err != nil {
-					Log.Println(fmt.Sprintf("%s write error: %s", RemoteAddr, err))
-				}
-			}
-		}),
-	}
-	go func() {
-		<-ctx.Done()
-		err := s.Shutdown(context.Background())
-		if err != nil {
-			Log.Println("server shutdown error:", err)
-		}
 	}()
-	if tlsCfg != nil {
-		s.TLSConfig = tlsCfg
-		err = s.ServeTLS(l, "", "")
-	} else {
-		err = s.Serve(l)
+	if LogSettings.MoreMsg {
+		Log.Println("accept", RemoteAddr)
 	}
-	if err != nil && err != http.ErrServerClosed {
-		Log.Fatalln("server close err:", err)
+	if r.URL.Path != cfg.HTTP.Path {
+		Log.Println(fmt.Sprintf("%s path not match: %s", RemoteAddr, r.URL.Path))
+		return
+	}
+	buf, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		Log.Println(fmt.Sprintf("%s read error: %s", RemoteAddr, err))
+		return
+	}
+	if LogSettings.MoreMsg {
+		Log.Println(fmt.Sprintf("%s read success", RemoteAddr))
+	}
+	rt := Handler(buf)
+	if rt != nil && len(rt) > 0 {
+		_, err := w.Write(rt)
+		if err != nil {
+			Log.Println(fmt.Sprintf("%s write error: %s", RemoteAddr, err))
+		}
 	}
 }
 
-func serverHandler(buf []byte) []byte {
+func Handler(buf []byte) []byte {
 	if buf == nil {
 		return []byte("fail")
 	}

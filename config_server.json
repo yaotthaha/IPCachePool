@@ -28,6 +28,10 @@
       "require_client_cert": 0,
       "ignore_verify": false,
       "alpn": "quic-transport"
+    },
+    "http3": {
+      "enable": true,
+      "only": true
     }
   },
   "scripts": {

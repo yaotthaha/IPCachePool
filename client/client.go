@@ -128,6 +128,7 @@ func (cfg *Config) ClientRun(ctx context.Context) {
 					client.Transport = &http3.RoundTripper{
 						TLSClientConfig: tlsCfg,
 					}
+					Log.Println("use http3 client")
 				} else {
 					client.Transport = &http.Transport{
 						TLSClientConfig: tlsCfg,

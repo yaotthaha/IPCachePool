@@ -58,10 +58,11 @@ type ConfigParseScript struct {
 }
 
 type ConfigParseTransport struct {
-	Listen string                   `json:"listen"`
-	Port   uint16                   `json:"port"`
-	HTTP   ConfigParseTransportHTTP `json:"http"`
-	TLS    ConfigParseTransportTLS  `json:"tls"`
+	Listen string                    `json:"listen"`
+	Port   uint16                    `json:"port"`
+	HTTP   ConfigParseTransportHTTP  `json:"http"`
+	TLS    ConfigParseTransportTLS   `json:"tls"`
+	HTTP3  ConfigParseTransportHTTP3 `json:"http3"`
 }
 
 type ConfigParseTransportHTTP struct {
@@ -79,6 +80,11 @@ type ConfigParseTransportTLS struct {
 	ALPN              string   `json:"alpn"`
 }
 
+type ConfigParseTransportHTTP3 struct {
+	Enable bool `json:"enable"`
+	Only   bool `json:"only"`
+}
+
 //
 //
 
@@ -87,6 +93,7 @@ type ConfigTransport struct {
 	Port   uint16
 	HTTP   ConfigTransportHTTP
 	TLS    ConfigTransportTLS
+	HTTP3  ConfigTransportHTTP3
 }
 
 type ConfigTransportHTTP struct {
@@ -102,6 +109,11 @@ type ConfigTransportTLS struct {
 	IgnoreVerify      bool
 	RequireClientCert uint
 	ALPN              string
+}
+
+type ConfigTransportHTTP3 struct {
+	Enable bool
+	Only   bool
 }
 
 type Config struct {
@@ -215,6 +227,8 @@ func Parse(filename string) (*Config, error) {
 	} else {
 		config.Transport.TLS.Enable = false
 	}
+	config.Transport.HTTP3.Enable = configParse.Transport.HTTP3.Enable
+	config.Transport.HTTP3.Only = configParse.Transport.HTTP3.Only
 	if configParse.Shell != "" {
 		config.Shell = configParse.Shell
 	} else {
