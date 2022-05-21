@@ -27,11 +27,11 @@ import (
 var (
 	LogFile       *os.File
 	Log           *log.Logger
+	LogSettings   ConfigParseLog
 	VerifyTimeout = 30 * time.Second
 )
 
 var (
-	LogSettings     ConfigParseLog
 	ClientMap       map[string]ConfigParseClient
 	ClientCacheMap  map[string]cachemap.CacheMap
 	ClientLock      sync.Mutex

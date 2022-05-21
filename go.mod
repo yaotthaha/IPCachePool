@@ -2,7 +2,7 @@ module github.com/yaotthaha/IPCachePool
 
 go 1.18
 
-require github.com/yaotthaha/cachemap v1.0.0
+require github.com/yaotthaha/cachemap v1.1.0
 
 require (
 	github.com/cheekybits/genny v1.0.0 // indirect
