@@ -22,9 +22,6 @@ LS0tLS1CRUdJTiBZYW90dCBFQ0MgUFVCTElDIEtFWS0tLS0tCk1Ga3dFd1lIS29aSXpqMENBUVlJS29a
 #### Write A Client Config
 ```
 {
-  "log": {
-    "more_msg": true
-  },
   "script": [],
   "servers": [
     {
@@ -54,8 +51,7 @@ LS0tLS1CRUdJTiBZYW90dCBFQ0MgUFVCTElDIEtFWS0tLS0tCk1Ga3dFd1lIS29aSXpqMENBUVlJS29a
 ```
 {
   "log": {
-    "file": "./server.log",
-    "more_msg": true
+    "file": "./server.log"
   },
   "clients": [
     {
@@ -119,4 +115,5 @@ $ ./IPCachePool -m client -c ./client.json
 - Support TLS ALPN
 - Support IPSet (Server) (Just Linux Only && Has IPSet Support)
 - Support Custom Script
-- Support HTTP/3(QUIC) (From [quic-go](https://github.com/lucas-clemente/quic-go))
+- Support HTTP/2 (TLS) (Auto Support When Enable TLS)
+- Support HTTP/3(QUIC) (TLS) (From [quic-go](https://github.com/lucas-clemente/quic-go))
