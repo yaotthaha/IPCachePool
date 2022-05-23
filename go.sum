@@ -161,6 +161,12 @@ github.com/yaotthaha/cachemap v1.0.0 h1:rKurEIIW5t6IjA/1aLaDMryzvWbswjsH4yS0f9GQ
 github.com/yaotthaha/cachemap v1.0.0/go.mod h1:TVBDC+j8W0TMX9808wtQPElWmdH6Z+LKX72bA1azBBw=
 github.com/yaotthaha/cachemap v1.1.0 h1:HDZoLPe426AADATczxUynx9BZtTl7DbHP7UnmP+0qKY=
 github.com/yaotthaha/cachemap v1.1.0/go.mod h1:TVBDC+j8W0TMX9808wtQPElWmdH6Z+LKX72bA1azBBw=
+github.com/yaotthaha/logplus v0.0.1 h1:pymwAdqEDo0F0LJp0Bc23yymzwm17f9eQEj8tgHz/dg=
+github.com/yaotthaha/logplus v0.0.1/go.mod h1:dSNF9dKhVEjmkgs+mS07n6laN6CgjK4Wv1+/hizISZo=
+github.com/yaotthaha/logplus v0.0.2 h1:JViYILfWzLQY1wC9pTbObVnwUwoByyUKk24GWyUVYG8=
+github.com/yaotthaha/logplus v0.0.2/go.mod h1:dSNF9dKhVEjmkgs+mS07n6laN6CgjK4Wv1+/hizISZo=
+github.com/yaotthaha/logplus v0.0.3 h1:Lzhkd+g3wHZMNpjO5SXcb09r+csohkXokk937WSwhzo=
+github.com/yaotthaha/logplus v0.0.3/go.mod h1:dSNF9dKhVEjmkgs+mS07n6laN6CgjK4Wv1+/hizISZo=
 github.com/yuin/goldmark v1.2.1/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
 github.com/yuin/goldmark v1.3.5/go.mod h1:mwnBkeHKe2W/ZEtQ+71ViKU8L12m81fl3OWwC1Zlc8k=
 go.opencensus.io v0.18.0/go.mod h1:vKdFvxhtzZ9onBp9VKHK8z/sRpBMnKAsufL7wlDrCOA=

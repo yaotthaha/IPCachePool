@@ -7,7 +7,7 @@ import (
 	"github.com/yaotthaha/IPCachePool/client"
 	"github.com/yaotthaha/IPCachePool/server"
 	"github.com/yaotthaha/IPCachePool/tool"
-	"log"
+	"github.com/yaotthaha/logplus"
 	"os"
 	"os/signal"
 	"syscall"
@@ -16,10 +16,11 @@ import (
 var (
 	AppName    = "IPCachePool"
 	AppAuthor  = "Yaott"
-	AppVersion = "v0.1.1-build-1"
+	AppVersion = "v0.1.2-build-1"
 )
 
 var (
+	Log     *logplus.LogPlus
 	Ctx     context.Context
 	CtxFunc context.CancelFunc
 )
@@ -82,35 +83,35 @@ func main() {
 }
 
 func CoreRun(filename string, coreType string) {
-	Log := log.New(os.Stdout, "", log.Ldate|log.Ltime|log.Lshortfile)
-	Log.Println(fmt.Sprintf("%s %s (Build From %s)", AppName, AppVersion, AppAuthor))
-	Log.Println(fmt.Sprintf("run mode: %s", coreType))
-	Log.Println(fmt.Sprintf("read config file: %s", filename))
+	Log = logplus.NewLogPlus(logplus.LogPlusOption{Lfile: 1, Debug: false})
+	Log.Println(logplus.Info, fmt.Sprintf("%s %s (Build From %s)", AppName, AppVersion, AppAuthor))
+	Log.Println(logplus.Info, fmt.Sprintf("run mode: %s", coreType))
+	Log.Println(logplus.Info, fmt.Sprintf("read config file: %s", filename))
 	switch coreType {
 	case "server":
 		cfg, err := server.Parse(filename)
 		if err != nil {
-			Log.Println(fmt.Sprintf("read config file error: %s", err))
+			Log.Println(logplus.Error, fmt.Sprintf("read config file error: %s", err))
 			return
 		}
-		Log.Println("read config file success")
+		Log.Println(logplus.Info, "read config file success")
 		go SetupCloseHandler()
 		Ctx, CtxFunc = context.WithCancel(context.Background())
-		Log.Println("server running")
-		cfg.ServerRun(Ctx)
+		Log.Println(logplus.Info, "server running")
+		cfg.ServerRun(Ctx, Log)
 	case "client":
 		cfg, err := client.Parse(filename)
 		if err != nil {
-			Log.Println(fmt.Sprintf("read config file error: %s", err))
+			Log.Println(logplus.Error, fmt.Sprintf("read config file error: %s", err))
 			return
 		}
-		Log.Println("read config file success")
+		Log.Println(logplus.Info, "read config file success")
 		go SetupCloseHandler()
 		Ctx, CtxFunc = context.WithCancel(context.Background())
-		Log.Println("client running")
-		cfg.ClientRun(Ctx)
+		Log.Println(logplus.Info, "client running")
+		cfg.ClientRun(Ctx, Log)
 	}
-	Log.Println("Bye!!!")
+	Log.Println(logplus.Info, "Bye!!!")
 }
 
 func SetupCloseHandler() {
@@ -118,7 +119,7 @@ func SetupCloseHandler() {
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM|syscall.SIGKILL)
 	go func() {
 		<-c
-		_, _ = fmt.Fprintln(os.Stdout, "interrupted by system")
+		Log.Println(logplus.Warning, "Interrupt signal received, shutting down...")
 		CtxFunc()
 	}()
 }

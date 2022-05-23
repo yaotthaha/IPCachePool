@@ -27,7 +27,12 @@
           "alpn": "http/1.1",
           "ignore_verify": false
         },
-        "http3": true
+        "http2": {
+          "enable": false
+        },
+        "http3": {
+          "enable": false
+        }
       },
       "interval": 10,
       "ttl": 10

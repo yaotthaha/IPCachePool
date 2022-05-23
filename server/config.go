@@ -19,8 +19,8 @@ type ConfigParse struct {
 }
 
 type ConfigParseLog struct {
-	File    string `json:"file"`
-	MoreMsg bool   `json:"more_msg"`
+	File  string `json:"file"`
+	Debug bool   `json:"debug"`
 }
 
 type ConfigParseIPSet struct {
@@ -85,7 +85,6 @@ type ConfigParseTransportHTTP3 struct {
 	Only   bool `json:"only"`
 }
 
-//
 //
 
 type ConfigTransport struct {
@@ -226,6 +225,9 @@ func Parse(filename string) (*Config, error) {
 		config.Transport.TLS.IgnoreVerify = configParse.Transport.TLS.IgnoreVerify
 	} else {
 		config.Transport.TLS.Enable = false
+	}
+	if configParse.Transport.HTTP3.Enable && !config.Transport.TLS.Enable {
+		return nil, errors.New("HTTP/3 Must Has TLS Support")
 	}
 	config.Transport.HTTP3.Enable = configParse.Transport.HTTP3.Enable
 	config.Transport.HTTP3.Only = configParse.Transport.HTTP3.Only

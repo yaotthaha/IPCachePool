@@ -11,14 +11,16 @@ import (
 	"github.com/yaotthaha/IPCachePool/command"
 	"github.com/yaotthaha/IPCachePool/pool"
 	"github.com/yaotthaha/IPCachePool/tool"
+	"github.com/yaotthaha/logplus"
+	"golang.org/x/net/http2"
 	"io"
 	"io/ioutil"
-	"log"
 	"net"
 	"net/http"
 	"net/netip"
 	"net/url"
 	"os"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -27,9 +29,7 @@ import (
 )
 
 var (
-	LogFile      *os.File
-	Log          *log.Logger
-	LogSettings  ConfigParseLog
+	Log          *logplus.LogPlus
 	WriteTimeout = 20 * time.Second
 )
 
@@ -40,24 +40,27 @@ var (
 	ShellArg   string
 )
 
-func (cfg *Config) ClientRun(ctx context.Context) {
-	Log = log.New(os.Stdout, "", log.LstdFlags|log.Lshortfile)
+func (cfg *Config) ClientRun(ctx context.Context, GlobalLog *logplus.LogPlus) {
+	Log = GlobalLog
 	if cfg.Log.File != "" {
 		var err error
-		LogFile, err = os.OpenFile(cfg.Log.File, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+		LogFile, err := os.OpenFile(cfg.Log.File, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 		if err != nil {
-			Log.Fatalln("open log file error:", err)
+			Log.Fatalln(logplus.Fatal, "open log file error:", err)
 		}
 		defer func(LogFile *os.File) {
+			Log.SetOutput(os.Stdout)
 			err := LogFile.Close()
 			if err != nil {
-				Log.Fatalln("close log file error:", err)
+				Log.Fatalln(logplus.Fatal, "close log file error:", err)
 			}
 		}(LogFile)
-		Log.Println("redirect log to", cfg.Log.File)
-		Log = log.New(LogFile, "", log.LstdFlags|log.Lshortfile)
+		Log.Println(logplus.Info, "redirect log to", cfg.Log.File)
+		Log.SetOutput(LogFile)
 	}
-	LogSettings = cfg.Log
+	if cfg.Log.Debug {
+		Log.Option.Debug = true
+	}
 	Shell = cfg.Shell
 	ShellArg = cfg.ShellArg
 	serverRunWG := sync.WaitGroup{}
@@ -80,7 +83,7 @@ func (cfg *Config) ClientRun(ctx context.Context) {
 				if (V.Transport.TLS.Cert != nil && len(V.Transport.TLS.Cert) > 0) && (V.Transport.TLS.Key != nil && len(V.Transport.TLS.Key) > 0) {
 					CertKey, err := tls.X509KeyPair(V.Transport.TLS.Cert, V.Transport.TLS.Key)
 					if err != nil {
-						Log.Fatalln("load cert key error:", err)
+						Log.Fatalln(logplus.Fatal, "load cert key error:", err)
 					}
 					tlsCfg.Certificates = []tls.Certificate{CertKey}
 				}
@@ -118,18 +121,24 @@ func (cfg *Config) ClientRun(ctx context.Context) {
 				GlobalLock.RUnlock()
 				RawData, err := GenRaw(Data, time.Duration(V.TTL)*time.Second, V.PublicKey, V.ClientID)
 				if err != nil {
-					Log.Println(fmt.Sprintf("gen raw data error: %s", err))
+					Log.Println(logplus.Error, fmt.Sprintf("gen raw data error: %s", err))
 					return false
 				}
 				client := http.Client{
 					Timeout: WriteTimeout,
 				}
-				if V.Transport.HTTP3 {
+				switch {
+				case V.Transport.HTTP3.Enable:
 					client.Transport = &http3.RoundTripper{
 						TLSClientConfig: tlsCfg,
 					}
-					Log.Println("use http3 client")
-				} else {
+					Log.Println(logplus.Info, "use http3 client")
+				case V.Transport.HTTP2.Enable:
+					client.Transport = &http2.Transport{
+						TLSClientConfig: tlsCfg,
+					}
+					Log.Println(logplus.Info, "use http2 client")
+				default:
 					client.Transport = &http.Transport{
 						TLSClientConfig: tlsCfg,
 					}
@@ -158,32 +167,50 @@ func (cfg *Config) ClientRun(ctx context.Context) {
 						}
 					}(),
 				}
-				resp, err := client.Do(&req)
-				if err != nil {
-					Log.Println(fmt.Sprintf("[%s] http request error: %s", V.Name, err))
-					return false
+				var resp *http.Response
+				for {
+					var err error
+					resp, err = client.Do(&req)
+					if err != nil {
+						Log.Println(logplus.Error, fmt.Sprintf("[%s] http request error: %s", V.Name, err))
+						switch {
+						case reflect.ValueOf(client.Transport).Type().String() == "*http3.RoundTripper":
+							switch {
+							case V.Transport.HTTP2.Enable:
+								Log.Println(logplus.Info, "try to use http2 client")
+								continue
+							default:
+								Log.Println(logplus.Info, "try to use http client")
+								continue
+							}
+						case reflect.ValueOf(client.Transport).Type().String() == "*http2.Transport":
+							Log.Println(logplus.Info, "try to use http client")
+							continue
+						default:
+							return false
+						}
+					}
+					break
 				}
 				defer func(Body io.ReadCloser) {
 					err := Body.Close()
 					if err != nil {
-						Log.Println(fmt.Sprintf("[%s] close conn error: %s", V.Name, err))
+						Log.Println(logplus.Error, fmt.Sprintf("[%s] close conn error: %s", V.Name, err))
 					}
 				}(resp.Body)
 				buf := bytes.Buffer{}
 				_, err = io.Copy(&buf, resp.Body)
 				if err != nil {
-					Log.Println(fmt.Sprintf("[%s] http read response error: %s", V.Name, err))
+					Log.Println(logplus.Error, fmt.Sprintf("[%s] http read response error: %s", V.Name, err))
 					return false
 				}
 				switch string(buf.Bytes()) {
 				case "fail":
-					Log.Println(fmt.Sprintf("[%s] http server send a fail message", V.Name))
+					Log.Println(logplus.Error, fmt.Sprintf("[%s] http server send a fail message", V.Name))
 				case "success":
-					if LogSettings.MoreMsg {
-						Log.Println(fmt.Sprintf("[%s] http server send a success message", V.Name))
-					}
+					Log.Println(logplus.Debug, fmt.Sprintf("[%s] http server send a success message", V.Name))
 				default:
-					Log.Println(fmt.Sprintf("[%s] http server send a unknown message: %s", V.Name, string(buf.Bytes())))
+					Log.Println(logplus.Warning, fmt.Sprintf("[%s] http server send a unknown message: %s", V.Name, string(buf.Bytes())))
 				}
 				return true
 			}
@@ -314,14 +341,14 @@ func (cfg *Config) ClientRun(ctx context.Context) {
 						}()
 						if err != nil {
 							if v.Fatal {
-								Log.Fatalln(fmt.Sprintf("run script [%s] error: %s , stdout: %s, stderr: %s", ScriptShow, err, stdout, stderr))
+								Log.Fatalln(logplus.Fatal, fmt.Sprintf("run script [%s] error: %s , stdout: %s, stderr: %s", ScriptShow, err, stdout, stderr))
 							}
 							if v.Return {
-								Log.Println(fmt.Sprintf("run script [%s] error: %s , stdout: %s, stderr: %s", ScriptShow, err, stdout, stderr))
+								Log.Println(logplus.Error, fmt.Sprintf("run script [%s] error: %s , stdout: %s, stderr: %s", ScriptShow, err, stdout, stderr))
 							}
 						} else {
 							if v.Return {
-								Log.Println(fmt.Sprintf("run script [%s] success, stdout: %s", ScriptShow, stdout))
+								Log.Println(logplus.Info, fmt.Sprintf("run script [%s] success, stdout: %s", ScriptShow, stdout))
 							}
 						}
 						RvChan <- stdout

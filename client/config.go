@@ -15,8 +15,8 @@ type ConfigParse struct {
 }
 
 type ConfigParseLog struct {
-	File    string `json:"file"`
-	MoreMsg bool   `json:"more_msg"`
+	File  string `json:"file"`
+	Debug bool   `json:"debug"`
 }
 
 type ConfigParseScriptBasic struct {
@@ -37,16 +37,25 @@ type ConfigParseServer struct {
 }
 
 type ConfigParseServerTransport struct {
-	Address string                         `json:"address"`
-	Port    uint16                         `json:"port"`
-	HTTP    ConfigParseServerTransportHTTP `json:"http"`
-	TLS     ConfigParseServerTransportTLS  `json:"tls"`
-	HTTP3   bool                           `json:"http3"`
+	Address string                          `json:"address"`
+	Port    uint16                          `json:"port"`
+	HTTP    ConfigParseServerTransportHTTP  `json:"http"`
+	TLS     ConfigParseServerTransportTLS   `json:"tls"`
+	HTTP2   ConfigParseServerTransportHTTP2 `json:"http2"`
+	HTTP3   ConfigParseServerTransportHTTP3 `json:"http3"`
 }
 
 type ConfigParseServerTransportHTTP struct {
 	Host string `json:"host"`
 	Path string `json:"path"`
+}
+
+type ConfigParseServerTransportHTTP2 struct {
+	Enable bool `json:"enable"`
+}
+
+type ConfigParseServerTransportHTTP3 struct {
+	Enable bool `json:"enable"`
 }
 
 type ConfigParseServerTransportTLS struct {
@@ -81,12 +90,21 @@ type ConfigServerTransportHTTP struct {
 	Path string
 }
 
+type ConfigServerTransportHTTP2 struct {
+	Enable bool
+}
+
+type ConfigServerTransportHTTP3 struct {
+	Enable bool
+}
+
 type ConfigServerTransport struct {
 	Address string
 	Port    uint16
 	HTTP    ConfigServerTransportHTTP
 	TLS     ConfigServerTransportTLS
-	HTTP3   bool
+	HTTP2   ConfigServerTransportHTTP2
+	HTTP3   ConfigServerTransportHTTP3
 }
 
 type ConfigServerTransportTLS struct {
@@ -218,7 +236,22 @@ func Parse(filename string) (*Config, error) {
 			} else {
 				c.Transport.TLS.Enable = false
 			}
-			c.Transport.HTTP3 = v.Transport.HTTP3
+			if v.Transport.HTTP2.Enable {
+				if !c.Transport.TLS.Enable {
+					return nil, errors.New("http2 must be used with tls")
+				}
+				c.Transport.HTTP2.Enable = true
+			} else {
+				c.Transport.HTTP2.Enable = false
+			}
+			if v.Transport.HTTP3.Enable {
+				if !c.Transport.TLS.Enable {
+					return nil, errors.New("http3 must be used with tls")
+				}
+				c.Transport.HTTP3.Enable = true
+			} else {
+				c.Transport.HTTP3.Enable = false
+			}
 			c.TTL = v.TTL
 			config.Servers = append(config.Servers, c)
 		}

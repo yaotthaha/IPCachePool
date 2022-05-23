@@ -1,7 +1,7 @@
 {
   "log": {
     "file": "./server.log",
-    "more_msg": true
+    "debug": true
   },
   "clients": [
     {
