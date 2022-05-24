@@ -632,6 +632,7 @@ func EasyHandler(cfg ConfigParseTransportEasy, addresses []string) {
 						GlobalChan <- struct{}{}
 					})
 					Log.Println(logplus.Info, fmt.Sprintf("easy: cidr [%s] add to cache", CIDR.String()))
+					GlobalChan <- struct{}{}
 					go EasyCheckFunc(IP, cfg.AutoCheck.Interval, cfg.AutoCheck.RetryInterval)
 				} else {
 					_ = EasyCacheMap.Add(CIDR, true, time.Duration(cfg.TTL)*time.Second, func(item cachemap.CacheItem) {
@@ -639,6 +640,7 @@ func EasyHandler(cfg ConfigParseTransportEasy, addresses []string) {
 						GlobalChan <- struct{}{}
 					})
 					Log.Println(logplus.Info, fmt.Sprintf("easy: cidr [%s] add to cache", CIDR.String()))
+					GlobalChan <- struct{}{}
 				}
 				return
 			}
@@ -648,6 +650,7 @@ func EasyHandler(cfg ConfigParseTransportEasy, addresses []string) {
 					GlobalChan <- struct{}{}
 				})
 				Log.Println(logplus.Info, fmt.Sprintf("easy: ip [%s] add to cache", IP.String()))
+				GlobalChan <- struct{}{}
 				go EasyCheckFunc(IP, cfg.AutoCheck.Interval, cfg.AutoCheck.RetryInterval)
 			} else {
 				_ = EasyCacheMap.Add(IP, true, time.Duration(cfg.TTL)*time.Second, func(item cachemap.CacheItem) {
@@ -655,6 +658,7 @@ func EasyHandler(cfg ConfigParseTransportEasy, addresses []string) {
 					GlobalChan <- struct{}{}
 				})
 				Log.Println(logplus.Info, fmt.Sprintf("easy: ip [%s] add to cache", IP.String()))
+				GlobalChan <- struct{}{}
 			}
 		}(v)
 	}
