@@ -6,15 +6,18 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/gob"
+	"encoding/json"
 	"fmt"
 	"github.com/lucas-clemente/quic-go"
 	"github.com/lucas-clemente/quic-go/http3"
 	"github.com/yaotthaha/IPCachePool/command"
 	"github.com/yaotthaha/IPCachePool/ipset"
+	"github.com/yaotthaha/IPCachePool/netstat"
 	"github.com/yaotthaha/IPCachePool/pool"
 	"github.com/yaotthaha/IPCachePool/tool"
 	"github.com/yaotthaha/cachemap"
 	"github.com/yaotthaha/logplus"
+	"io"
 	"io/ioutil"
 	"log"
 	"net"
@@ -38,6 +41,10 @@ var (
 	ClientMap       map[string]ConfigParseClient
 	ClientCacheMap  map[string]cachemap.CacheMap
 	ClientLock      sync.Mutex
+	EasyCacheMap    cachemap.CacheMap
+	Netstat         []netstat.Item
+	NetstatLock     sync.RWMutex
+	EasyCheckFunc   func(address interface{}, interval, retryInterval uint)
 	GlobalCacheMap  pool.NetAddrSlice
 	GlobalChan      chan struct{}
 	RequestCacheMap cachemap.CacheMap
@@ -235,28 +242,116 @@ func (cfg *Config) ServerRun(ctx context.Context, GlobalLog *logplus.LogPlus) {
 		defer wg.Done()
 		globalRun(ctx)
 	}()
+	if cfg.Transport.Easy.AutoCheck.Enable {
+		EasyCacheMap = cachemap.NewCacheMap()
+		Netstat = make([]netstat.Item, 0)
+		NetstatLock = sync.RWMutex{}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(5 * time.Second):
+					NetstatLock.Lock()
+					Temp, err := netstat.GetAll()
+					if err != nil {
+						NetstatLock.Unlock()
+						continue
+					}
+					Netstat = Temp
+					NetstatLock.Unlock()
+				}
+			}
+		}()
+		EasyCheckFunc = func(address interface{}, interval, retryInterval uint) {
+			CheckFunc := func() bool {
+				N := 0
+				WG := sync.WaitGroup{}
+				NetstatLock.RLock()
+				for _, v := range Netstat {
+					WG.Add(1)
+					go func(v netstat.Item) {
+						defer WG.Done()
+						switch address.(type) {
+						case netip.Addr:
+							IP := address.(netip.Addr)
+							if IP.Compare(v.RemoteIP) == 0 {
+								N++
+							}
+						case netip.Prefix:
+							CIDR := address.(netip.Prefix)
+							if CIDR.Contains(v.RemoteIP) {
+								N++
+							}
+						}
+					}(v)
+				}
+				NetstatLock.RUnlock()
+				WG.Wait()
+				if N > 0 {
+					return true
+				} else {
+					return false
+				}
+			}
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(time.Duration(interval) * time.Second):
+					if CheckFunc() {
+						continue
+					} else {
+						for {
+							Break := false
+							select {
+							case <-ctx.Done():
+								return
+							case <-time.After(time.Duration(retryInterval) * time.Second):
+								if CheckFunc() {
+									Break = true
+									break
+								} else {
+									_ = EasyCacheMap.Del(address)
+									return
+								}
+							}
+							if Break {
+								break
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	HTTPHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		serverHandler(w, r, cfg.Transport)
+	})
 	if cfg.Transport.HTTP3.Enable && cfg.Transport.HTTP3.Only {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			HTTP3ServerRun(tlsCfg, ctx, cfg.Transport)
+			HTTP3ServerRun(tlsCfg, ctx, cfg.Transport, HTTPHandler)
 		}()
 	} else if cfg.Transport.HTTP3.Enable && !cfg.Transport.HTTP3.Only {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			HTTPServerRun(tlsCfg, ctx, cfg.Transport)
+			HTTPServerRun(tlsCfg, ctx, cfg.Transport, HTTPHandler)
 		}()
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			HTTP3ServerRun(tlsCfg, ctx, cfg.Transport)
+			HTTP3ServerRun(tlsCfg, ctx, cfg.Transport, HTTPHandler)
 		}()
 	} else {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			HTTPServerRun(tlsCfg, ctx, cfg.Transport)
+			HTTPServerRun(tlsCfg, ctx, cfg.Transport, HTTPHandler)
 		}()
 	}
 	wg.Wait()
@@ -318,7 +413,7 @@ func (cfg *Config) ServerRun(ctx context.Context, GlobalLog *logplus.LogPlus) {
 	Log.Println(logplus.Info, "server exit")
 }
 
-func HTTPServerRun(tlsCfg *tls.Config, ctx context.Context, cfg ConfigTransport) {
+func HTTPServerRun(tlsCfg *tls.Config, ctx context.Context, cfg ConfigTransport, handlerFunc http.HandlerFunc) {
 	ListenAddr := net.JoinHostPort(cfg.Listen, strconv.Itoa(int(cfg.Port)))
 	Log.Println(logplus.Info, "listen on", ListenAddr, "http server")
 	l, err := net.Listen("tcp", ListenAddr)
@@ -332,9 +427,7 @@ func HTTPServerRun(tlsCfg *tls.Config, ctx context.Context, cfg ConfigTransport)
 		}
 	}(l)
 	server := &http.Server{
-		Handler: http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			serverHandler(w, r, cfg)
-		})),
+		Handler:      http.Handler(handlerFunc),
 		ReadTimeout:  ReadTimeout,
 		WriteTimeout: WriteTimeout,
 	}
@@ -358,7 +451,7 @@ func HTTPServerRun(tlsCfg *tls.Config, ctx context.Context, cfg ConfigTransport)
 	}
 }
 
-func HTTP3ServerRun(tlsCfg *tls.Config, ctx context.Context, cfg ConfigTransport) {
+func HTTP3ServerRun(tlsCfg *tls.Config, ctx context.Context, cfg ConfigTransport, handlerFunc http.HandlerFunc) {
 	ListenAddr := net.JoinHostPort(cfg.Listen, strconv.Itoa(int(cfg.Port)))
 	Log.Println(logplus.Info, "listen on", ListenAddr, "http3 server")
 	l, err := net.Listen("tcp", ListenAddr)
@@ -373,9 +466,7 @@ func HTTP3ServerRun(tlsCfg *tls.Config, ctx context.Context, cfg ConfigTransport
 	}(l)
 	server := &http3.Server{
 		Server: &http.Server{
-			Handler: http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				serverHandler(w, r, cfg)
-			})),
+			Handler:      http.Handler(handlerFunc),
 			ReadTimeout:  ReadTimeout,
 			WriteTimeout: WriteTimeout,
 		},
@@ -416,22 +507,65 @@ func serverHandler(w http.ResponseWriter, r *http.Request, cfg ConfigTransport) 
 		}
 	}()
 	Log.Println(logplus.Debug, "accept", RemoteAddr)
-	if r.URL.Path != cfg.HTTP.Path {
+	switch r.URL.Path {
+	case cfg.HTTP.Path:
+		buf, err := ioutil.ReadAll(r.Body)
+		if err != nil {
+			Log.Println(logplus.Debug, fmt.Sprintf("%s read error: %s", RemoteAddr, err))
+			return
+		}
+		Log.Println(logplus.Debug, fmt.Sprintf("%s read success", RemoteAddr))
+		rt := Handler(buf)
+		if rt != nil && len(rt) > 0 {
+			_, err := w.Write(rt)
+			if err != nil {
+				Log.Println(logplus.Debug, fmt.Sprintf("%s write error: %s", RemoteAddr, err))
+			}
+		}
+	case cfg.Easy.Path:
+		if !cfg.Easy.Enable {
+			Log.Println(logplus.Debug, fmt.Sprintf("%s path not match: %s", RemoteAddr, r.URL.Path))
+			return
+		}
+		if r.Header.Get("Auth-Key") != cfg.Easy.Key {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		buf, err := ioutil.ReadAll(r.Body)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		defer func(Body io.ReadCloser) {
+			_ = Body.Close()
+		}(r.Body)
+		var Addresses []string
+		err = json.Unmarshal(buf, &Addresses)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		Log.Println(logplus.Debug, fmt.Sprintf("%s read success", RemoteAddr))
+		if len(Addresses) <= 0 {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		for _, v := range Addresses {
+			_, err := netip.ParseAddr(v)
+			if err != nil {
+				_, err = netip.ParsePrefix(v)
+				if err != nil {
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+			}
+		}
+		EasyHandler(cfg.Easy, Addresses)
+		w.WriteHeader(http.StatusOK)
+		return
+	default:
 		Log.Println(logplus.Debug, fmt.Sprintf("%s path not match: %s", RemoteAddr, r.URL.Path))
 		return
-	}
-	buf, err := ioutil.ReadAll(r.Body)
-	if err != nil {
-		Log.Println(logplus.Debug, fmt.Sprintf("%s read error: %s", RemoteAddr, err))
-		return
-	}
-	Log.Println(logplus.Debug, fmt.Sprintf("%s read success", RemoteAddr))
-	rt := Handler(buf)
-	if rt != nil && len(rt) > 0 {
-		_, err := w.Write(rt)
-		if err != nil {
-			Log.Println(logplus.Debug, fmt.Sprintf("%s write error: %s", RemoteAddr, err))
-		}
 	}
 }
 
@@ -494,6 +628,53 @@ func Handler(buf []byte) []byte {
 	} else {
 		return []byte("fail")
 	}
+}
+
+func EasyHandler(cfg ConfigParseTransportEasy, addresses []string) {
+	wg := sync.WaitGroup{}
+	for _, v := range addresses {
+		wg.Add(1)
+		go func(v string) {
+			defer wg.Done()
+			IP, err := netip.ParseAddr(v)
+			if err != nil {
+				CIDR, err := netip.ParsePrefix(v)
+				if err != nil {
+					return
+				}
+				if cfg.AutoCheck.Enable {
+					_ = EasyCacheMap.Add(CIDR, true, -1, func(item cachemap.CacheItem) {
+						Log.Println(logplus.Warning, fmt.Sprintf("easy: cidr [%s] expired", item.Key.(netip.Prefix).String()))
+						GlobalChan <- struct{}{}
+					})
+					Log.Println(logplus.Info, fmt.Sprintf("easy: cidr [%s] add to cache", CIDR.String()))
+					go EasyCheckFunc(IP, cfg.AutoCheck.Interval, cfg.AutoCheck.RetryInterval)
+				} else {
+					_ = EasyCacheMap.Add(CIDR, true, time.Duration(cfg.TTL)*time.Second, func(item cachemap.CacheItem) {
+						Log.Println(logplus.Warning, fmt.Sprintf("easy: cidr [%s] expired", item.Key.(netip.Prefix).String()))
+						GlobalChan <- struct{}{}
+					})
+					Log.Println(logplus.Info, fmt.Sprintf("easy: cidr [%s] add to cache", CIDR.String()))
+				}
+				return
+			}
+			if cfg.AutoCheck.Enable {
+				_ = EasyCacheMap.Add(IP, true, -1, func(item cachemap.CacheItem) {
+					Log.Println(logplus.Warning, fmt.Sprintf("easy: ip [%s] expired", item.Key.(netip.Addr).String()))
+					GlobalChan <- struct{}{}
+				})
+				Log.Println(logplus.Info, fmt.Sprintf("easy: ip [%s] add to cache", IP.String()))
+				go EasyCheckFunc(IP, cfg.AutoCheck.Interval, cfg.AutoCheck.RetryInterval)
+			} else {
+				_ = EasyCacheMap.Add(IP, true, time.Duration(cfg.TTL)*time.Second, func(item cachemap.CacheItem) {
+					Log.Println(logplus.Warning, fmt.Sprintf("easy: ip [%s] expired", item.Key.(netip.Addr).String()))
+					GlobalChan <- struct{}{}
+				})
+				Log.Println(logplus.Info, fmt.Sprintf("easy: ip [%s] add to cache", IP.String()))
+			}
+		}(v)
+	}
+	wg.Wait()
 }
 
 func clientCacheMapAdd(IDSha256 []byte, d pool.Receive, TTLSet int64) bool {
@@ -652,6 +833,9 @@ func globalRun(ctx context.Context) {
 					RvChan <- item.Key
 				})
 			}
+			EasyCacheMap.Foreach(func(item cachemap.CacheItem) {
+				RvChan <- item.Key
+			})
 			ClientLock.Unlock()
 			Stop = true
 			WG.Wait()

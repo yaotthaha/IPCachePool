@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"github.com/yaotthaha/IPCachePool/client"
+	easy_client "github.com/yaotthaha/IPCachePool/easy-client"
 	"github.com/yaotthaha/IPCachePool/server"
 	"github.com/yaotthaha/IPCachePool/tool"
 	"github.com/yaotthaha/logplus"
@@ -16,7 +17,7 @@ import (
 var (
 	AppName    = "IPCachePool"
 	AppAuthor  = "Yaott"
-	AppVersion = "v0.1.2-build-1"
+	AppVersion = "v0.1.2-build-2"
 )
 
 var (
@@ -36,7 +37,7 @@ var (
 func main() {
 	flag.BoolVar(&ParamHelp, "h", false, "Show help")
 	flag.BoolVar(&ParamVersion, "v", false, "Show version")
-	flag.StringVar(&ParamMode, "m", "", "Mode: server or client")
+	flag.StringVar(&ParamMode, "m", "", "Mode: server or client or easy-client")
 	flag.StringVar(&ParamConfigFile, "c", "./config.json", "Config file")
 	flag.BoolVar(&ParamGenKey, "genkey", false, "Generate key")
 	flag.Parse()
@@ -76,6 +77,12 @@ func main() {
 			return
 		}
 		CoreRun(ParamConfigFile, "client")
+	case "easy-client", "Easy-client", "EASY-CLIENT", "e", "E":
+		if ParamConfigFile == "" {
+			_, _ = fmt.Fprintln(os.Stdout, "Config file is required")
+			return
+		}
+		CoreRun(ParamConfigFile, "easy-client")
 	default:
 		_, _ = fmt.Fprintln(os.Stdout, "Mode is required")
 		return
@@ -110,6 +117,14 @@ func CoreRun(filename string, coreType string) {
 		Ctx, CtxFunc = context.WithCancel(context.Background())
 		Log.Println(logplus.Info, "client running")
 		cfg.ClientRun(Ctx, Log)
+	case "easy-client":
+		cfg, err := easy_client.Parse(filename)
+		if err != nil {
+			Log.Println(logplus.Error, fmt.Sprintf("read config file error: %s", err))
+			return
+		}
+		Log.Println(logplus.Info, "read config file success")
+		cfg.EasyClientRun(Log)
 	}
 	Log.Println(logplus.Info, "Bye!!!")
 }

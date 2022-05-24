@@ -1,0 +1,31 @@
+{
+  "script": [
+    ""
+  ],
+  "server":  {
+    "address": "",
+    "port": 0,
+    "http": {
+      "host": "",
+      "path": "/",
+      "header": {
+        "key": ""
+      }
+    },
+    "tls": {
+      "enable": false,
+      "cert": "./cert/client.crt",
+      "key": "./cert/client.key",
+      "ca": ["./cert/ca.crt"],
+      "sni": "server1",
+      "alpn": "http/1.1",
+      "ignore_verify": false
+    },
+    "http2": {
+      "enable": false
+    },
+    "http3": {
+      "enable": false
+    }
+  }
+}

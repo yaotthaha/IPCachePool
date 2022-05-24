@@ -63,6 +63,7 @@ type ConfigParseTransport struct {
 	HTTP   ConfigParseTransportHTTP  `json:"http"`
 	TLS    ConfigParseTransportTLS   `json:"tls"`
 	HTTP3  ConfigParseTransportHTTP3 `json:"http3"`
+	Easy   ConfigParseTransportEasy  `json:"easy"`
 }
 
 type ConfigParseTransportHTTP struct {
@@ -85,6 +86,20 @@ type ConfigParseTransportHTTP3 struct {
 	Only   bool `json:"only"`
 }
 
+type ConfigParseTransportEasy struct {
+	Enable    bool                              `json:"enable"`
+	Path      string                            `json:"path"`
+	Key       string                            `json:"key"`
+	AutoCheck ConfigParseTransportEasyAutoCheck `json:"auto_check"`
+	TTL       uint64                            `json:"ttl"`
+}
+
+type ConfigParseTransportEasyAutoCheck struct {
+	Enable        bool `json:"enable"`
+	Interval      uint `json:"interval"`
+	RetryInterval uint `json:"retry_interval"`
+}
+
 //
 
 type ConfigTransport struct {
@@ -93,6 +108,7 @@ type ConfigTransport struct {
 	HTTP   ConfigTransportHTTP
 	TLS    ConfigTransportTLS
 	HTTP3  ConfigTransportHTTP3
+	Easy   ConfigParseTransportEasy
 }
 
 type ConfigTransportHTTP struct {
@@ -259,5 +275,31 @@ func Parse(filename string) (*Config, error) {
 	} else {
 		config.IPSet.Enable = false
 	}
+	if configParse.Transport.Easy.Enable {
+		if configParse.Transport.Easy.Path != "" {
+			if configParse.Transport.Easy.Path[0] != '/' {
+				configParse.Transport.Easy.Path = "/" + configParse.Transport.Easy.Path
+			} else {
+				config.Transport.Easy.Path = configParse.Transport.Easy.Path
+			}
+		} else {
+			return nil, errors.New("no transport easy path")
+		}
+		if configParse.Transport.Easy.Key == "" {
+			return nil, errors.New("no transport easy key")
+		}
+		if configParse.Transport.Easy.TTL == 0 {
+			configParse.Transport.Easy.TTL = 360
+		}
+		if configParse.Transport.Easy.AutoCheck.Enable {
+			if configParse.Transport.Easy.AutoCheck.Interval == 0 {
+				configParse.Transport.Easy.AutoCheck.Interval = 30
+			}
+			if configParse.Transport.Easy.AutoCheck.RetryInterval == 0 {
+				configParse.Transport.Easy.AutoCheck.RetryInterval = 60
+			}
+		}
+	}
+	config.Transport.Easy = configParse.Transport.Easy
 	return config, nil
 }

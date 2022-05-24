@@ -32,6 +32,17 @@
     "http3": {
       "enable": true,
       "only": true
+    },
+    "easy": {
+      "enable": false,
+      "path": "/easy-connect",
+      "key": "siafjiasfjdjso",
+      "auto_check": {
+        "enable": false,
+        "interval": 30,
+        "retry_interval": 60
+      },
+      "ttl": 360
     }
   },
   "scripts": {
