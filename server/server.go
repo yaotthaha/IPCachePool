@@ -314,7 +314,7 @@ func (cfg *Config) ServerRun(ctx context.Context, GlobalLog *logplus.LogPlus) {
 									Break = true
 									break
 								} else {
-									_ = EasyCacheMap.Del(address)
+									_ = EasyCacheMap.SetTTL(address, 1, true)
 									return
 								}
 							}
