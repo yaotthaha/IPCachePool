@@ -5,10 +5,10 @@ import (
 	"flag"
 	"fmt"
 	"github.com/yaotthaha/IPCachePool/client"
-	easy_client "github.com/yaotthaha/IPCachePool/easy-client"
+	easyclient "github.com/yaotthaha/IPCachePool/easy-client"
+	"github.com/yaotthaha/IPCachePool/logplus"
 	"github.com/yaotthaha/IPCachePool/server"
 	"github.com/yaotthaha/IPCachePool/tool"
-	"github.com/yaotthaha/logplus"
 	"os"
 	"os/signal"
 	"syscall"
@@ -17,7 +17,7 @@ import (
 var (
 	AppName    = "IPCachePool"
 	AppAuthor  = "Yaott"
-	AppVersion = "v0.1.2-build-2"
+	AppVersion = "v0.1.2-build-8"
 )
 
 var (
@@ -118,7 +118,7 @@ func CoreRun(filename string, coreType string) {
 		Log.Println(logplus.Info, "client running")
 		cfg.ClientRun(Ctx, Log)
 	case "easy-client":
-		cfg, err := easy_client.Parse(filename)
+		cfg, err := easyclient.Parse(filename)
 		if err != nil {
 			Log.Println(logplus.Error, fmt.Sprintf("read config file error: %s", err))
 			return

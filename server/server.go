@@ -12,11 +12,11 @@ import (
 	"github.com/lucas-clemente/quic-go/http3"
 	"github.com/yaotthaha/IPCachePool/command"
 	"github.com/yaotthaha/IPCachePool/ipset"
+	"github.com/yaotthaha/IPCachePool/logplus"
 	"github.com/yaotthaha/IPCachePool/netstat"
 	"github.com/yaotthaha/IPCachePool/pool"
 	"github.com/yaotthaha/IPCachePool/tool"
 	"github.com/yaotthaha/cachemap"
-	"github.com/yaotthaha/logplus"
 	"io"
 	"io/ioutil"
 	"log"
@@ -61,16 +61,16 @@ func (cfg *Config) ServerRun(ctx context.Context, GlobalLog *logplus.LogPlus) {
 		var err error
 		LogFile, err := os.OpenFile(cfg.Log.File, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 		if err != nil {
-			Log.Fatalln(logplus.Fatal, "open log file error:", err)
+			Log.Fatalln(logplus.Fatal, fmt.Sprintf("open log file error: %s", err))
 		}
 		defer func(LogFile *os.File) {
 			Log.SetOutput(os.Stdout)
 			err := LogFile.Close()
 			if err != nil {
-				Log.Fatalln(logplus.Fatal, "close log file error:", err)
+				Log.Fatalf(logplus.Fatal, "close log file error: %s\n", err)
 			}
 		}(LogFile)
-		Log.Println(logplus.Info, "redirect log to", cfg.Log.File)
+		Log.Printf(logplus.Info, "redirect log to %s\n", cfg.Log.File)
 		Log.SetOutput(LogFile)
 	}
 	if cfg.Log.Debug {
@@ -415,18 +415,9 @@ func (cfg *Config) ServerRun(ctx context.Context, GlobalLog *logplus.LogPlus) {
 
 func HTTPServerRun(tlsCfg *tls.Config, ctx context.Context, cfg ConfigTransport, handlerFunc http.HandlerFunc) {
 	ListenAddr := net.JoinHostPort(cfg.Listen, strconv.Itoa(int(cfg.Port)))
-	Log.Println(logplus.Info, "listen on", ListenAddr, "http server")
-	l, err := net.Listen("tcp", ListenAddr)
-	if err != nil {
-		Log.Fatalln(logplus.Fatal, "http server listen error:", err)
-	}
-	defer func(l net.Listener) {
-		err := l.Close()
-		if err != nil && !strings.Contains(err.Error(), "use of closed network connection") {
-			Log.Fatalln(logplus.Fatal, "http server close listener error:", err)
-		}
-	}(l)
+	Log.Println(logplus.Info, fmt.Sprintf("listen on %s http server", ListenAddr))
 	server := &http.Server{
+		Addr:         ListenAddr,
 		Handler:      http.Handler(handlerFunc),
 		ReadTimeout:  ReadTimeout,
 		WriteTimeout: WriteTimeout,
@@ -438,34 +429,26 @@ func HTTPServerRun(tlsCfg *tls.Config, ctx context.Context, cfg ConfigTransport,
 		<-ctx.Done()
 		err := server.Shutdown(context.Background())
 		if err != nil {
-			Log.Println(logplus.Error, "http server shutdown error:", err)
+			Log.Println(logplus.Error, fmt.Sprintf("http server shutdown error: %s", err))
 		}
 	}()
+	var err error
 	if tlsCfg != nil {
 		err = server.ListenAndServeTLS("", "")
 	} else {
 		err = server.ListenAndServe()
 	}
 	if err != nil && err != http.ErrServerClosed {
-		Log.Fatalln(logplus.Fatal, "http server close err:", err)
+		Log.Fatalln(logplus.Fatal, fmt.Sprintf("http server close err: %s", err))
 	}
 }
 
 func HTTP3ServerRun(tlsCfg *tls.Config, ctx context.Context, cfg ConfigTransport, handlerFunc http.HandlerFunc) {
 	ListenAddr := net.JoinHostPort(cfg.Listen, strconv.Itoa(int(cfg.Port)))
-	Log.Println(logplus.Info, "listen on", ListenAddr, "http3 server")
-	l, err := net.Listen("tcp", ListenAddr)
-	if err != nil {
-		Log.Fatalln(logplus.Fatal, "http3 server listen error:", err)
-	}
-	defer func(l net.Listener) {
-		err := l.Close()
-		if err != nil && !strings.Contains(err.Error(), "use of closed network connection") {
-			Log.Fatalln(logplus.Fatal, "http3 server close listener error:", err)
-		}
-	}(l)
+	Log.Printf(logplus.Info, fmt.Sprintf("listen on %s http3 server", ListenAddr))
 	server := &http3.Server{
 		Server: &http.Server{
+			Addr:         ListenAddr,
 			Handler:      http.Handler(handlerFunc),
 			ReadTimeout:  ReadTimeout,
 			WriteTimeout: WriteTimeout,
@@ -479,16 +462,17 @@ func HTTP3ServerRun(tlsCfg *tls.Config, ctx context.Context, cfg ConfigTransport
 		<-ctx.Done()
 		err := server.Shutdown(context.Background())
 		if err != nil {
-			Log.Println(logplus.Error, "http3 server shutdown error:", err)
+			Log.Printf(logplus.Error, "http3 server shutdown error: %s\n", err)
 		}
 	}()
+	var err error
 	if tlsCfg != nil {
 		err = server.ListenAndServeTLS("", "")
 	} else {
 		err = server.ListenAndServe()
 	}
 	if err != nil && err != http.ErrServerClosed {
-		Log.Fatalln(logplus.Fatal, "http3 server close err:", err)
+		Log.Fatalln(logplus.Fatal, fmt.Sprintf("http3 server close err: %s", err))
 	}
 }
 
@@ -506,7 +490,7 @@ func serverHandler(w http.ResponseWriter, r *http.Request, cfg ConfigTransport) 
 			return addr
 		}
 	}()
-	Log.Println(logplus.Debug, "accept", RemoteAddr)
+	Log.Printf(logplus.Debug, "accept %s\n", RemoteAddr)
 	switch r.URL.Path {
 	case cfg.HTTP.Path:
 		buf, err := ioutil.ReadAll(r.Body)

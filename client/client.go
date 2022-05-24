@@ -9,9 +9,9 @@ import (
 	"fmt"
 	"github.com/lucas-clemente/quic-go/http3"
 	"github.com/yaotthaha/IPCachePool/command"
+	"github.com/yaotthaha/IPCachePool/logplus"
 	"github.com/yaotthaha/IPCachePool/pool"
 	"github.com/yaotthaha/IPCachePool/tool"
-	"github.com/yaotthaha/logplus"
 	"golang.org/x/net/http2"
 	"io"
 	"io/ioutil"
@@ -46,16 +46,16 @@ func (cfg *Config) ClientRun(ctx context.Context, GlobalLog *logplus.LogPlus) {
 		var err error
 		LogFile, err := os.OpenFile(cfg.Log.File, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 		if err != nil {
-			Log.Fatalln(logplus.Fatal, "open log file error:", err)
+			Log.Fatalln(logplus.Fatal, fmt.Sprintf("open log file error: %s", err))
 		}
 		defer func(LogFile *os.File) {
 			Log.SetOutput(os.Stdout)
 			err := LogFile.Close()
 			if err != nil {
-				Log.Fatalln(logplus.Fatal, "close log file error:", err)
+				Log.Fatalln(logplus.Fatal, fmt.Sprintf("close log file error: %s", err))
 			}
 		}(LogFile)
-		Log.Println(logplus.Info, "redirect log to", cfg.Log.File)
+		Log.Printf(logplus.Info, "redirect log to %s\n", cfg.Log.File)
 		Log.SetOutput(LogFile)
 	}
 	if cfg.Log.Debug {
@@ -83,7 +83,7 @@ func (cfg *Config) ClientRun(ctx context.Context, GlobalLog *logplus.LogPlus) {
 				if (V.Transport.TLS.Cert != nil && len(V.Transport.TLS.Cert) > 0) && (V.Transport.TLS.Key != nil && len(V.Transport.TLS.Key) > 0) {
 					CertKey, err := tls.X509KeyPair(V.Transport.TLS.Cert, V.Transport.TLS.Key)
 					if err != nil {
-						Log.Fatalln(logplus.Fatal, "load cert key error:", err)
+						Log.Fatalln(logplus.Fatal, fmt.Sprintf("load cert key error: %s", err))
 					}
 					tlsCfg.Certificates = []tls.Certificate{CertKey}
 				}

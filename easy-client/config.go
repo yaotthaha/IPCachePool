@@ -121,16 +121,20 @@ func Parse(filename string) (*Config, error) {
 	}
 	if raw.Server.TLS.Enable {
 		config.Server.TLS.Enable = true
-		Cert, err := ioutil.ReadFile(raw.Server.TLS.Cert)
-		if err != nil {
-			return nil, err
+		if raw.Server.TLS.Cert != "" {
+			Cert, err := ioutil.ReadFile(raw.Server.TLS.Cert)
+			if err != nil {
+				return nil, err
+			}
+			config.Server.TLS.Cert = Cert
 		}
-		Key, err := ioutil.ReadFile(raw.Server.TLS.Key)
-		if err != nil {
-			return nil, err
+		if raw.Server.TLS.Key != "" {
+			Key, err := ioutil.ReadFile(raw.Server.TLS.Key)
+			if err != nil {
+				return nil, err
+			}
+			config.Server.TLS.Key = Key
 		}
-		config.Server.TLS.Cert = Cert
-		config.Server.TLS.Key = Key
 		if len(raw.Server.TLS.CA) > 0 {
 			config.Server.TLS.CA = make([][]byte, 0)
 			for _, v := range raw.Server.TLS.CA {

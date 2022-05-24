@@ -161,8 +161,8 @@ github.com/wumansgy/goEncrypt v1.0.0 h1:ef7vfz2ezOtyHMIjDt8b+v5RhrVtQL1TO6qDhA6H
 github.com/wumansgy/goEncrypt v1.0.0/go.mod h1:d0Tq90dl4xqZEiphQ7dAVEPxcefmY2hSiATq3BfgsVY=
 github.com/yaotthaha/cachemap v1.1.0 h1:HDZoLPe426AADATczxUynx9BZtTl7DbHP7UnmP+0qKY=
 github.com/yaotthaha/cachemap v1.1.0/go.mod h1:TVBDC+j8W0TMX9808wtQPElWmdH6Z+LKX72bA1azBBw=
-github.com/yaotthaha/logplus v0.0.3 h1:Lzhkd+g3wHZMNpjO5SXcb09r+csohkXokk937WSwhzo=
-github.com/yaotthaha/logplus v0.0.3/go.mod h1:dSNF9dKhVEjmkgs+mS07n6laN6CgjK4Wv1+/hizISZo=
+github.com/yaotthaha/IPCachePool/logplus v0.0.3 h1:Lzhkd+g3wHZMNpjO5SXcb09r+csohkXokk937WSwhzo=
+github.com/yaotthaha/IPCachePool/logplus v0.0.3/go.mod h1:dSNF9dKhVEjmkgs+mS07n6laN6CgjK4Wv1+/hizISZo=
 github.com/yuin/goldmark v1.2.1/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
 github.com/yuin/goldmark v1.3.5/go.mod h1:mwnBkeHKe2W/ZEtQ+71ViKU8L12m81fl3OWwC1Zlc8k=
 go.opencensus.io v0.18.0/go.mod h1:vKdFvxhtzZ9onBp9VKHK8z/sRpBMnKAsufL7wlDrCOA=

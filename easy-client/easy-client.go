@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"github.com/lucas-clemente/quic-go/http3"
 	"github.com/yaotthaha/IPCachePool/easy-client/OoklaGetIP"
-	"github.com/yaotthaha/logplus"
+	"github.com/yaotthaha/IPCachePool/logplus"
 	"golang.org/x/net/http2"
 	"io/ioutil"
 	"net"
@@ -111,7 +111,7 @@ func (cfg *Config) EasyClientRun(GlobalLog *logplus.LogPlus) {
 		Log.Fatalln(logplus.Fatal, err)
 		return
 	}
-	Log.Println(logplus.Info, "ip/cidr:", Result)
+	Log.Printf(logplus.Info, "ip/cidr: %s\n", Result)
 	cfg.send(data, tlsConfig)
 }
 

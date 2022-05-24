@@ -9,7 +9,6 @@ require (
 	github.com/ti-mo/netfilter v0.2.0
 	github.com/wumansgy/goEncrypt v1.0.0
 	github.com/yaotthaha/cachemap v1.1.0
-	github.com/yaotthaha/logplus v0.0.3
 	golang.org/x/net v0.0.0-20210428140749-89ef3d95e781
 )
 
