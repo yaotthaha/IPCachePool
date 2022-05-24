@@ -42,7 +42,7 @@ var (
 	ClientCacheMap  map[string]cachemap.CacheMap
 	ClientLock      sync.Mutex
 	EasyCacheMap    cachemap.CacheMap
-	Netstat         []netstat.Item
+	NetstatCacheMap cachemap.CacheMap
 	NetstatLock     sync.RWMutex
 	EasyCheckFunc   func(address interface{}, interval, retryInterval uint)
 	GlobalCacheMap  pool.NetAddrSlice
@@ -244,7 +244,7 @@ func (cfg *Config) ServerRun(ctx context.Context, GlobalLog *logplus.LogPlus) {
 	}()
 	if cfg.Transport.Easy.AutoCheck.Enable {
 		EasyCacheMap = cachemap.NewCacheMap()
-		Netstat = make([]netstat.Item, 0)
+		NetstatCacheMap = cachemap.NewCacheMap()
 		NetstatLock = sync.RWMutex{}
 		wg.Add(1)
 		go func() {
@@ -253,48 +253,52 @@ func (cfg *Config) ServerRun(ctx context.Context, GlobalLog *logplus.LogPlus) {
 				select {
 				case <-ctx.Done():
 					return
-				case <-time.After(5 * time.Second):
-					NetstatLock.Lock()
+				case <-time.After(3 * time.Second):
 					Temp, err := netstat.GetAll()
 					if err != nil {
-						NetstatLock.Unlock()
 						continue
 					}
-					Netstat = Temp
+					NetstatLock.Lock()
+					for _, v := range Temp {
+						err := NetstatCacheMap.Add(v.RemoteIP, true, 10*time.Second, nil)
+						if err != nil {
+							_ = NetstatCacheMap.SetTTL(v.RemoteIP, 10*time.Second, true)
+						}
+					}
 					NetstatLock.Unlock()
 				}
 			}
 		}()
 		EasyCheckFunc = func(address interface{}, interval, retryInterval uint) {
 			CheckFunc := func() bool {
-				N := 0
-				WG := sync.WaitGroup{}
+				N := make(map[netip.Addr]struct{})
 				NetstatLock.RLock()
-				for _, v := range Netstat {
-					WG.Add(1)
-					go func(v netstat.Item) {
-						defer WG.Done()
-						switch address.(type) {
-						case netip.Addr:
-							IP := address.(netip.Addr)
-							if IP.Compare(v.RemoteIP) == 0 {
-								N++
-							}
-						case netip.Prefix:
-							CIDR := address.(netip.Prefix)
-							if CIDR.Contains(v.RemoteIP) {
-								N++
-							}
-						}
-					}(v)
-				}
+				NetstatCacheMap.Foreach(func(item cachemap.CacheItem) {
+					N[item.Key.(netip.Addr)] = struct{}{}
+				})
 				NetstatLock.RUnlock()
-				WG.Wait()
-				if N > 0 {
-					return true
-				} else {
-					return false
+				ok := false
+				switch address.(type) {
+				case netip.Addr:
+					IP := address.(netip.Addr)
+					if _, ok := N[IP]; ok {
+						ok = true
+					}
+				case netip.Prefix:
+					CIDR := address.(netip.Prefix)
+					w := sync.WaitGroup{}
+					for k := range N {
+						w.Add(1)
+						go func(k netip.Addr) {
+							defer w.Done()
+							if CIDR.Contains(k) {
+								ok = true
+							}
+						}(k)
+					}
+					w.Wait()
 				}
+				return ok
 			}
 			for {
 				select {
