@@ -42,7 +42,7 @@ var (
 	ClientCacheMap  map[string]cachemap.CacheMap
 	ClientLock      sync.Mutex
 	EasyCacheMap    cachemap.CacheMap
-	NetstatCacheMap cachemap.CacheMap
+	Netstat         cachemap.CacheMap
 	NetstatLock     sync.RWMutex
 	EasyCheckFunc   func(address interface{}, interval, retryInterval uint)
 	GlobalCacheMap  pool.NetAddrSlice
@@ -244,7 +244,7 @@ func (cfg *Config) ServerRun(ctx context.Context, GlobalLog *logplus.LogPlus) {
 	}()
 	if cfg.Transport.Easy.AutoCheck.Enable {
 		EasyCacheMap = cachemap.NewCacheMap()
-		NetstatCacheMap = cachemap.NewCacheMap()
+		Netstat = cachemap.NewCacheMap()
 		NetstatLock = sync.RWMutex{}
 		wg.Add(1)
 		go func() {
@@ -253,52 +253,37 @@ func (cfg *Config) ServerRun(ctx context.Context, GlobalLog *logplus.LogPlus) {
 				select {
 				case <-ctx.Done():
 					return
-				case <-time.After(3 * time.Second):
+				case <-time.After(5 * time.Second):
 					Temp, err := netstat.GetAll()
 					if err != nil {
+						NetstatLock.Unlock()
 						continue
 					}
 					NetstatLock.Lock()
+					w := sync.WaitGroup{}
 					for _, v := range Temp {
-						err := NetstatCacheMap.Add(v.RemoteIP, true, 10*time.Second, nil)
-						if err != nil {
-							_ = NetstatCacheMap.SetTTL(v.RemoteIP, 10*time.Second, true)
-						}
+						w.Add(1)
+						go func(v netip.Addr) {
+							defer w.Done()
+							if Netstat.SetTTL(v, 10*time.Second, true) != nil {
+								_ = Netstat.Add(v, nil, 10*time.Second, nil)
+							}
+						}(v.RemoteIP)
 					}
+					w.Wait()
 					NetstatLock.Unlock()
 				}
 			}
 		}()
 		EasyCheckFunc = func(address interface{}, interval, retryInterval uint) {
 			CheckFunc := func() bool {
-				N := make(map[netip.Addr]struct{})
 				NetstatLock.RLock()
-				NetstatCacheMap.Foreach(func(item cachemap.CacheItem) {
-					N[item.Key.(netip.Addr)] = struct{}{}
-				})
+				_, err := Netstat.Get(address)
 				NetstatLock.RUnlock()
-				ok := false
-				switch address.(type) {
-				case netip.Addr:
-					IP := address.(netip.Addr)
-					if _, ok := N[IP]; ok {
-						ok = true
-					}
-				case netip.Prefix:
-					CIDR := address.(netip.Prefix)
-					w := sync.WaitGroup{}
-					for k := range N {
-						w.Add(1)
-						go func(k netip.Addr) {
-							defer w.Done()
-							if CIDR.Contains(k) {
-								ok = true
-							}
-						}(k)
-					}
-					w.Wait()
+				if err != nil {
+					return false
 				}
-				return ok
+				return true
 			}
 			for {
 				select {
