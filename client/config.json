@@ -10,7 +10,7 @@
     {
       "name": "server1",
       "client_id": "server1",
-      "public_key": "",
+      "private_key": "",
       "transport": {
         "address": "",
         "port": 0,

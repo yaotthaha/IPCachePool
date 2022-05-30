@@ -30,10 +30,10 @@ type ConfigParseIPSet struct {
 }
 
 type ConfigParseClient struct {
-	Name       string `json:"name"`
-	ClientID   string `json:"client_id"`
-	PrivateKey string `json:"private_key"`
-	TTL        int64  `json:"ttl"`
+	Name      string `json:"name"`
+	ClientID  string `json:"client_id"`
+	PublicKey string `json:"public_key"`
+	TTL       int64  `json:"ttl"`
 }
 
 type ConfigParseScriptBasic struct {
@@ -168,14 +168,14 @@ func Parse(filename string) (*Config, error) {
 			} else {
 				T2[v.ClientID]++
 			}
-			if v.PrivateKey == "" {
-				return nil, fmt.Errorf("client %s has no private key", v.Name)
+			if v.PublicKey == "" {
+				return nil, fmt.Errorf("client %s has no public key", v.Name)
 			}
 			config.Clients = append(config.Clients, ConfigParseClient{
-				Name:       v.Name,
-				ClientID:   v.ClientID,
-				PrivateKey: v.PrivateKey,
-				TTL:        v.TTL,
+				Name:      v.Name,
+				ClientID:  v.ClientID,
+				PublicKey: v.PublicKey,
+				TTL:       v.TTL,
 			})
 		}
 	} else {

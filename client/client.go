@@ -5,13 +5,14 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/gob"
+	"encoding/json"
 	"fmt"
 	"github.com/lucas-clemente/quic-go/http3"
 	"github.com/yaotthaha/IPCachePool/command"
 	"github.com/yaotthaha/IPCachePool/logplus"
 	"github.com/yaotthaha/IPCachePool/pool"
 	"github.com/yaotthaha/IPCachePool/tool"
+	"github.com/yaotthaha/IPCachePool/transport"
 	"golang.org/x/net/http2"
 	"io"
 	"io/ioutil"
@@ -119,7 +120,7 @@ func (cfg *Config) ClientRun(ctx context.Context, GlobalLog *logplus.LogPlus) {
 				}
 				Data := GlobalData
 				GlobalLock.RUnlock()
-				RawData, err := GenRaw(Data, time.Duration(V.TTL)*time.Second, V.PublicKey, V.ClientID)
+				RawData, err := GenRaw(Data, time.Duration(V.TTL)*time.Second, V.PrivateKey, V.ClientID)
 				if err != nil {
 					Log.Println(logplus.Error, fmt.Sprintf("gen raw data error: %s", err))
 					return false
@@ -375,38 +376,27 @@ func (cfg *Config) ClientRun(ctx context.Context, GlobalLog *logplus.LogPlus) {
 	wg.Wait()
 }
 
-func GenRaw(d pool.NetAddrSlice, TTL time.Duration, pubKey string, ID string) ([]byte, error) {
-	RealData := pool.Receive{
-		Data: d,
-		TTL:  TTL,
+func GenRaw(d pool.NetAddrSlice, TTL time.Duration, priKey string, ID string) ([]byte, error) {
+	RealData := transport.Transport{
+		ID:   ID,
+		Time: time.Now().Format(time.RFC3339Nano),
+		Data: struct {
+			IPv4   []netip.Addr   `json:"ipv4"`
+			IPv6   []netip.Addr   `json:"ipv6"`
+			CIDRv4 []netip.Prefix `json:"cidrv4"`
+			CIDRv6 []netip.Prefix `json:"cidrv6"`
+		}{
+			IPv4:   d.IPv4,
+			IPv6:   d.IPv6,
+			CIDRv4: d.CIDRv4,
+			CIDRv6: d.CIDRv6,
+		},
+		TTL: int64(TTL.Seconds()),
 	}
-	type RawDataStruct struct {
-		IDSha256    []byte
-		Verify      string
-		Time        int64
-		EncryptData []byte
-	}
-	TimeStamp := time.Now().Unix()
-	buf := bytes.Buffer{}
-	err := gob.NewEncoder(&buf).Encode(RealData)
+	Verify, err := tool.ECCSign([]byte(RealData.Time), []byte(priKey))
 	if err != nil {
 		return nil, err
 	}
-	bufBytes := buf.Bytes()
-	IDSha256 := tool.Sha256([]byte(ID))
-	EncData, err := tool.ECCEncrypt(bufBytes, []byte(pubKey))
-	if err != nil {
-		return nil, err
-	}
-	Verify := tool.Base64Encode(tool.Sha256(append(IDSha256, append([]byte(strconv.FormatInt(TimeStamp, 10)), EncData...)...)))
-	RawData := RawDataStruct{
-		IDSha256:    IDSha256,
-		Verify:      string(Verify),
-		Time:        TimeStamp,
-		EncryptData: EncData,
-	}
-	buf = bytes.Buffer{}
-	err = gob.NewEncoder(&buf).Encode(RawData)
-	base64Data := tool.Base64Encode(buf.Bytes())
-	return base64Data, nil
+	RealData.Verify = string(Verify)
+	return json.Marshal(RealData)
 }

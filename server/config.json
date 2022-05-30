@@ -7,7 +7,7 @@
     {
       "name": "client1",
       "client_id": "client1",
-      "private_key": "",
+      "public_key": "",
       "ttl": 60
     }
   ],

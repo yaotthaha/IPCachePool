@@ -1,11 +1,9 @@
 package server
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/gob"
 	"encoding/json"
 	"fmt"
 	"github.com/lucas-clemente/quic-go"
@@ -16,6 +14,7 @@ import (
 	"github.com/yaotthaha/IPCachePool/netstat"
 	"github.com/yaotthaha/IPCachePool/pool"
 	"github.com/yaotthaha/IPCachePool/tool"
+	"github.com/yaotthaha/IPCachePool/transport"
 	"github.com/yaotthaha/cachemap"
 	"io"
 	"io/ioutil"
@@ -31,23 +30,22 @@ import (
 )
 
 var (
-	Log           *logplus.LogPlus
-	ReadTimeout   = 30 * time.Second
-	WriteTimeout  = 30 * time.Second
-	VerifyTimeout = 30 * time.Second
+	Log          *logplus.LogPlus
+	ReadTimeout  = 30 * time.Second
+	WriteTimeout = 30 * time.Second
 )
 
 var (
 	ClientMap       map[string]ConfigParseClient
 	ClientCacheMap  map[string]cachemap.CacheMap
 	ClientLock      sync.Mutex
+	RequestCacheMap cachemap.CacheMap
 	EasyCacheMap    cachemap.CacheMap
 	Netstat         cachemap.CacheMap
 	NetstatLock     sync.RWMutex
 	EasyCheckFunc   func(address interface{}, interval, retryInterval uint)
 	GlobalCacheMap  pool.NetAddrSlice
 	GlobalChan      chan struct{}
-	RequestCacheMap cachemap.CacheMap
 	CommandSlice    ConfigParseScript
 	IPSet           ConfigParseIPSet
 	Shell           string
@@ -79,10 +77,10 @@ func (cfg *Config) ServerRun(ctx context.Context, GlobalLog *logplus.LogPlus) {
 	ClientMap = make(map[string]ConfigParseClient)
 	ClientCacheMap = make(map[string]cachemap.CacheMap)
 	for _, v := range cfg.Clients {
-		IDSha256 := string(tool.Sha256([]byte(v.ClientID)))
-		ClientMap[IDSha256] = v
-		ClientCacheMap[IDSha256] = cachemap.NewCacheMap()
+		ClientMap[v.ClientID] = v
+		ClientCacheMap[v.ClientID] = cachemap.NewCacheMap()
 	}
+	RequestCacheMap = cachemap.NewCacheMap()
 	if cfg.IPSet.Enable {
 		err := ipset.Check()
 		if err != nil {
@@ -181,7 +179,6 @@ func (cfg *Config) ServerRun(ctx context.Context, GlobalLog *logplus.LogPlus) {
 		CIDRv4: make([]netip.Prefix, 0),
 		CIDRv6: make([]netip.Prefix, 0),
 	}
-	RequestCacheMap = cachemap.NewCacheMap()
 	GlobalChan = make(chan struct{}, 1024)
 	defer close(GlobalChan)
 	CommandSlice = cfg.Scripts
@@ -487,12 +484,13 @@ func serverHandler(w http.ResponseWriter, r *http.Request, cfg ConfigTransport) 
 			Log.Println(logplus.Debug, fmt.Sprintf("%s read error: %s", RemoteAddr, err))
 			return
 		}
-		Log.Println(logplus.Debug, fmt.Sprintf("%s read success", RemoteAddr))
-		rt := Handler(buf)
+		UUID := tool.UUIDGen()
+		Log.Println(logplus.Debug, fmt.Sprintf("[%s] %s read success", UUID, RemoteAddr))
+		rt := Handler(UUID, buf)
 		if rt != nil && len(rt) > 0 {
 			_, err := w.Write(rt)
 			if err != nil {
-				Log.Println(logplus.Debug, fmt.Sprintf("%s write error: %s", RemoteAddr, err))
+				Log.Println(logplus.Debug, fmt.Sprintf("[%s] %s write error: %s", RemoteAddr, UUID, err))
 			}
 		}
 	case cfg.Easy.Path:
@@ -542,63 +540,77 @@ func serverHandler(w http.ResponseWriter, r *http.Request, cfg ConfigTransport) 
 	}
 }
 
-func Handler(buf []byte) []byte {
+func Handler(UUID string, buf []byte) []byte {
 	if buf == nil {
+		Log.Println(logplus.Debug, fmt.Sprintf("[%s] buf is nil", UUID))
 		return []byte("fail")
 	}
 	if len(buf) <= 0 {
+		Log.Println(logplus.Debug, fmt.Sprintf("[%s] buf len is 0", UUID))
 		return []byte("fail")
 	}
-	bufBase64Dec, err := tool.Base64Decode(buf)
+	var Data transport.Transport
+	err := json.Unmarshal(buf, &Data)
 	if err != nil {
+		Log.Println(logplus.Debug, fmt.Sprintf("[%s] json unmarshal error: %s", UUID, err))
 		return []byte("fail")
 	}
-	type RawDataStruct struct {
-		IDSha256    []byte
-		Verify      string
-		Time        int64
-		EncryptData []byte
-	}
-	var RawData RawDataStruct
-	err = gob.NewDecoder(bytes.NewReader(bufBase64Dec)).Decode(&RawData)
-	if err != nil {
-		return []byte("fail")
-	}
-	TimeRv := time.Unix(RawData.Time, 0)
-	IDSha256 := RawData.IDSha256
-	EncryptData := RawData.EncryptData
-	Verify := tool.Base64Encode(tool.Sha256(append(IDSha256, append([]byte(strconv.FormatInt(RawData.Time, 10)), EncryptData...)...)))
-	if !bytes.Equal(Verify, []byte(RawData.Verify)) {
-		return []byte("fail")
-	}
-	Cli, ok := ClientMap[string(IDSha256)]
+	Cli, ok := ClientMap[Data.ID]
 	if !ok {
+		Log.Println(logplus.Debug, fmt.Sprintf("[%s] client not found: %s", UUID, Data.ID))
 		return []byte("fail")
 	}
-	if TimeRv.Add(VerifyTimeout).Before(time.Now()) {
+	T, err := time.Parse(time.RFC3339Nano, Data.Time)
+	if err != nil {
+		Log.Println(logplus.Debug, fmt.Sprintf("[%s] time parse error: %s", UUID, err))
 		return []byte("fail")
 	}
-	if _, err := RequestCacheMap.Get(RawData.Verify); err == nil {
+	if T.Add(10 * time.Second).Before(time.Now()) {
+		Log.Println(logplus.Debug, fmt.Sprintf("[%s] time is too old: %s", UUID, Data.Time))
+		return []byte("fail")
+	}
+	if _, err := RequestCacheMap.Get(T); err == nil {
+		Log.Println(logplus.Debug, fmt.Sprintf("[%s] attack", UUID))
 		return []byte("fail")
 	} else {
-		err := RequestCacheMap.Add(RawData.Verify, nil, VerifyTimeout, nil)
-		if err != nil {
-			return []byte("fail")
-		}
+		_ = RequestCacheMap.Add(T, nil, 10*time.Second, nil)
 	}
-	RealDataByte, err := tool.ECCDecrypt(EncryptData, []byte(Cli.PrivateKey))
+	Verify, err := tool.ECCVerifySign([]byte(Data.Time), Data.Verify, []byte(Cli.PublicKey))
 	if err != nil {
+		Log.Println(logplus.Debug, fmt.Sprintf("[%s] verify error: %s", UUID, err))
 		return []byte("fail")
 	}
-	var RealData pool.Receive
-	err = gob.NewDecoder(bytes.NewReader(RealDataByte)).Decode(&RealData)
-	if err != nil {
+	if !Verify {
+		Log.Println(logplus.Debug, fmt.Sprintf("[%s] verify fail", UUID))
 		return []byte("fail")
 	}
-	rt := clientCacheMapAdd(IDSha256, RealData, Cli.TTL)
+	RealData := pool.Receive{
+		Data: pool.NetAddrSlice{
+			IPv4:   nil,
+			IPv6:   nil,
+			CIDRv4: nil,
+			CIDRv6: nil,
+		},
+		TTL: time.Duration(Data.TTL) * time.Second,
+	}
+	if Data.Data.IPv4 != nil {
+		RealData.Data.IPv4 = Data.Data.IPv4
+	}
+	if Data.Data.IPv6 != nil {
+		RealData.Data.IPv6 = Data.Data.IPv6
+	}
+	if Data.Data.CIDRv4 != nil {
+		RealData.Data.CIDRv4 = Data.Data.CIDRv4
+	}
+	if Data.Data.CIDRv6 != nil {
+		RealData.Data.CIDRv6 = Data.Data.CIDRv6
+	}
+	rt := clientCacheMapAdd(Data.ID, RealData, Cli.TTL)
 	if rt {
+		Log.Println(logplus.Debug, fmt.Sprintf("[%s] add success", UUID))
 		return []byte("success")
 	} else {
+		Log.Println(logplus.Debug, fmt.Sprintf("[%s] add fail", UUID))
 		return []byte("fail")
 	}
 }
@@ -654,10 +666,10 @@ func EasyHandler(cfg ConfigParseTransportEasy, addresses []string) {
 	wg.Wait()
 }
 
-func clientCacheMapAdd(IDSha256 []byte, d pool.Receive, TTLSet int64) bool {
+func clientCacheMapAdd(ID string, d pool.Receive, TTLSet int64) bool {
 	ClientLock.Lock()
 	defer ClientLock.Unlock()
-	m := ClientCacheMap[string(IDSha256)]
+	m := ClientCacheMap[ID]
 	var TTL time.Duration
 	if d.TTL > 0 {
 		TTL = d.TTL

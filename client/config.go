@@ -28,12 +28,12 @@ type ConfigParseScriptBasic struct {
 }
 
 type ConfigParseServer struct {
-	Name      string                     `json:"name"`
-	ClientID  string                     `json:"client_id"`
-	PublicKey string                     `json:"public_key"`
-	Interval  uint                       `json:"interval"`
-	TTL       int                        `json:"ttl"`
-	Transport ConfigParseServerTransport `json:"transport"`
+	Name       string                     `json:"name"`
+	ClientID   string                     `json:"client_id"`
+	PrivateKey string                     `json:"private_key"`
+	Interval   uint                       `json:"interval"`
+	TTL        int                        `json:"ttl"`
+	Transport  ConfigParseServerTransport `json:"transport"`
 }
 
 type ConfigParseServerTransport struct {
@@ -77,12 +77,12 @@ type Config struct {
 }
 
 type ConfigServer struct {
-	Name      string
-	ClientID  string
-	PublicKey string
-	Interval  uint
-	TTL       int
-	Transport ConfigServerTransport
+	Name       string
+	ClientID   string
+	PrivateKey string
+	Interval   uint
+	TTL        int
+	Transport  ConfigServerTransport
 }
 
 type ConfigServerTransportHTTP struct {
@@ -162,10 +162,10 @@ func Parse(filename string) (*Config, error) {
 				T2[v.ClientID]++
 				c.ClientID = v.ClientID
 			}
-			if v.PublicKey == "" {
-				return nil, errors.New("no public key found")
+			if v.PrivateKey == "" {
+				return nil, errors.New("no private key found")
 			} else {
-				c.PublicKey = v.PublicKey
+				c.PrivateKey = v.PrivateKey
 			}
 			if v.Interval == 0 {
 				v.Interval = 30
