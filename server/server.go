@@ -623,26 +623,6 @@ func EasyHandler(cfg ConfigParseTransportEasy, addresses []string) {
 			defer wg.Done()
 			IP, err := netip.ParseAddr(v)
 			if err != nil {
-				CIDR, err := netip.ParsePrefix(v)
-				if err != nil {
-					return
-				}
-				if cfg.AutoCheck.Enable {
-					_ = EasyCacheMap.Add(CIDR, true, -1, func(item cachemap.CacheItem) {
-						Log.Println(logplus.Warning, fmt.Sprintf("easy: cidr [%s] expired", item.Key.(netip.Prefix).String()))
-						GlobalChan <- struct{}{}
-					})
-					Log.Println(logplus.Info, fmt.Sprintf("easy: cidr [%s] add to cache", CIDR.String()))
-					GlobalChan <- struct{}{}
-					go EasyCheckFunc(IP, cfg.AutoCheck.Interval, cfg.AutoCheck.RetryInterval)
-				} else {
-					_ = EasyCacheMap.Add(CIDR, true, time.Duration(cfg.TTL)*time.Second, func(item cachemap.CacheItem) {
-						Log.Println(logplus.Warning, fmt.Sprintf("easy: cidr [%s] expired", item.Key.(netip.Prefix).String()))
-						GlobalChan <- struct{}{}
-					})
-					Log.Println(logplus.Info, fmt.Sprintf("easy: cidr [%s] add to cache", CIDR.String()))
-					GlobalChan <- struct{}{}
-				}
 				return
 			}
 			if cfg.AutoCheck.Enable {
