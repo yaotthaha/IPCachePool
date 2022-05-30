@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/lucas-clemente/quic-go/http3"
+	"github.com/yaotthaha/IPCachePool/easy-client/CloudFlareCNIPv6"
 	"github.com/yaotthaha/IPCachePool/easy-client/OoklaGetIP"
 	"github.com/yaotthaha/IPCachePool/logplus"
 	"golang.org/x/net/http2"
@@ -93,6 +94,12 @@ func (cfg *Config) EasyClientRun(GlobalLog *logplus.LogPlus) {
 		for _, v := range IPs {
 			Result = append(Result, v.String())
 		}
+	}
+	IPv6, err := CloudFlareCNIPv6.Get()
+	if err != nil {
+		Log.Println(logplus.Warning, err)
+	} else {
+		Result = append(Result, IPv6.String())
 	}
 	ResultMap := make(map[string]int)
 	for _, v := range Result {
