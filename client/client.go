@@ -21,7 +21,6 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
-	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -128,19 +127,17 @@ func (cfg *Config) ClientRun(ctx context.Context, GlobalLog *logplus.LogPlus) {
 				client := http.Client{
 					Timeout: WriteTimeout,
 				}
-				switch {
-				case V.Transport.HTTP3.Enable:
-					client.Transport = &http3.RoundTripper{
+				HTTPTr := make(map[int]interface{})
+				HTTPTr[len(HTTPTr)] = &http.Transport{
+					TLSClientConfig: tlsCfg,
+				}
+				if V.Transport.HTTP2.Enable {
+					HTTPTr[len(HTTPTr)] = &http2.Transport{
 						TLSClientConfig: tlsCfg,
 					}
-					Log.Println(logplus.Info, "use http3 client")
-				case V.Transport.HTTP2.Enable:
-					client.Transport = &http2.Transport{
-						TLSClientConfig: tlsCfg,
-					}
-					Log.Println(logplus.Info, "use http2 client")
-				default:
-					client.Transport = &http.Transport{
+				}
+				if V.Transport.HTTP3.Enable {
+					HTTPTr[len(HTTPTr)] = &http3.RoundTripper{
 						TLSClientConfig: tlsCfg,
 					}
 				}
@@ -169,26 +166,42 @@ func (cfg *Config) ClientRun(ctx context.Context, GlobalLog *logplus.LogPlus) {
 					}(),
 				}
 				var resp *http.Response
+				p := 0
+				retry := 2
 				for {
+					l := p % len(HTTPTr)
+					t := HTTPTr[len(HTTPTr)-l-1]
+					switch t.(type) {
+					case *http.Transport:
+						if r := p / len(HTTPTr); r == 0 {
+							Log.Println(logplus.Debug, fmt.Sprintf("[%s] use http client", V.Name))
+						} else {
+							Log.Println(logplus.Debug, fmt.Sprintf("[%s] retry %s, use http client", V.Name, strconv.Itoa(r)))
+						}
+						client.Transport = t.(*http.Transport)
+					case *http2.Transport:
+						if r := p / len(HTTPTr); r == 0 {
+							Log.Println(logplus.Debug, fmt.Sprintf("[%s] use http2 client", V.Name))
+						} else {
+							Log.Println(logplus.Debug, fmt.Sprintf("[%s] retry %s, use http2 client", V.Name, strconv.Itoa(r)))
+						}
+						client.Transport = t.(*http2.Transport)
+					case *http3.RoundTripper:
+						if r := p / len(HTTPTr); r == 0 {
+							Log.Println(logplus.Debug, fmt.Sprintf("[%s] use http3 client", V.Name))
+						} else {
+							Log.Println(logplus.Debug, fmt.Sprintf("[%s] retry %s, use http3 client", V.Name, strconv.Itoa(r)))
+						}
+						client.Transport = t.(*http3.RoundTripper)
+					}
 					var err error
 					resp, err = client.Do(&req)
 					if err != nil {
 						Log.Println(logplus.Error, fmt.Sprintf("[%s] http request error: %s", V.Name, err))
-						switch {
-						case reflect.ValueOf(client.Transport).Type().String() == "*http3.RoundTripper":
-							switch {
-							case V.Transport.HTTP2.Enable:
-								Log.Println(logplus.Info, "try to use http2 client")
-								continue
-							default:
-								Log.Println(logplus.Info, "try to use http client")
-								continue
-							}
-						case reflect.ValueOf(client.Transport).Type().String() == "*http2.Transport":
-							Log.Println(logplus.Info, "try to use http client")
-							continue
-						default:
+						if p == len(HTTPTr)*retry-1 {
 							return false
+						} else {
+							p++
 						}
 					}
 					break
@@ -223,13 +236,23 @@ func (cfg *Config) ClientRun(ctx context.Context, GlobalLog *logplus.LogPlus) {
 				case <-ctx.Done():
 					return
 				case <-firstChan:
+					c, cFunc := context.WithCancel(context.Background())
+					go func() {
+						select {
+						case <-firstChan:
+						case <-c.Done():
+							return
+						}
+					}()
 					for !Do() {
 						select {
 						case <-time.After(2 * time.Second):
 						case <-ctx.Done():
+							cFunc()
 							return
 						}
 					}
+					cFunc()
 				case <-time.After(time.Duration(V.Interval) * time.Second):
 					Do()
 				}
