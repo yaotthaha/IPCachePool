@@ -28,12 +28,13 @@ type ConfigParseScriptBasic struct {
 }
 
 type ConfigParseServer struct {
-	Name       string                     `json:"name"`
-	ClientID   string                     `json:"client_id"`
-	PrivateKey string                     `json:"private_key"`
-	Interval   uint                       `json:"interval"`
-	TTL        int                        `json:"ttl"`
-	Transport  ConfigParseServerTransport `json:"transport"`
+	Name           string                     `json:"name"`
+	ClientID       string                     `json:"client_id"`
+	PrivateKey     string                     `json:"private_key"`
+	Interval       uint                       `json:"interval"`
+	TTL            int                        `json:"ttl"`
+	Transport      ConfigParseServerTransport `json:"transport"`
+	RequestTimeout uint                       `json:"request_timeout"`
 }
 
 type ConfigParseServerTransport struct {
@@ -77,12 +78,13 @@ type Config struct {
 }
 
 type ConfigServer struct {
-	Name       string
-	ClientID   string
-	PrivateKey string
-	Interval   uint
-	TTL        int
-	Transport  ConfigServerTransport
+	Name           string
+	ClientID       string
+	PrivateKey     string
+	Interval       uint
+	TTL            int
+	Transport      ConfigServerTransport
+	RequestTimeout uint
 }
 
 type ConfigServerTransportHTTP struct {
@@ -253,6 +255,7 @@ func Parse(filename string) (*Config, error) {
 				c.Transport.HTTP3.Enable = false
 			}
 			c.TTL = v.TTL
+			c.RequestTimeout = v.RequestTimeout
 			config.Servers = append(config.Servers, c)
 		}
 	} else {

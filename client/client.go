@@ -29,8 +29,7 @@ import (
 )
 
 var (
-	Log          *logplus.LogPlus
-	WriteTimeout = 20 * time.Second
+	Log *logplus.LogPlus
 )
 
 var (
@@ -124,9 +123,8 @@ func (cfg *Config) ClientRun(ctx context.Context, GlobalLog *logplus.LogPlus) {
 					Log.Println(logplus.Error, fmt.Sprintf("gen raw data error: %s", err))
 					return false
 				}
-				client := http.Client{
-					Timeout: WriteTimeout,
-				}
+				client := http.Client{}
+				client.Timeout = time.Duration(int(V.RequestTimeout)) * time.Second
 				HTTPTr := make(map[int]interface{})
 				HTTPTr[len(HTTPTr)] = &http.Transport{
 					TLSClientConfig: tlsCfg,

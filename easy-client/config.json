@@ -26,6 +26,7 @@
     },
     "http3": {
       "enable": false
-    }
+    },
+    "request_timeout": 20
   }
 }

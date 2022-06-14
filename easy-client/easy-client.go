@@ -124,7 +124,7 @@ func (cfg *Config) EasyClientRun(GlobalLog *logplus.LogPlus) {
 
 func (cfg *Config) send(data []byte, tlsConfig *tls.Config) {
 	client := &http.Client{
-		Timeout: 10 * time.Second,
+		Timeout: time.Duration(int(cfg.Server.RequestTimeout)) * time.Second,
 	}
 	switch {
 	case cfg.Server.HTTP2.Enable:

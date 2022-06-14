@@ -35,7 +35,8 @@
         }
       },
       "interval": 10,
-      "ttl": 10
+      "ttl": 10,
+      "request_timeout": 20
     }
   ]
 }

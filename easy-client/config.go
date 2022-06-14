@@ -12,12 +12,13 @@ type RawConfig struct {
 }
 
 type RawConfigServer struct {
-	Address string               `json:"address"`
-	Port    uint16               `json:"port"`
-	HTTP    RawConfigServerHTTP  `json:"http"`
-	TLS     RawConfigServerTLS   `json:"tls"`
-	HTTP2   RawConfigServerHTTP2 `json:"http2"`
-	HTTP3   RawConfigServerHTTP3 `json:"http3"`
+	Address        string               `json:"address"`
+	Port           uint16               `json:"port"`
+	HTTP           RawConfigServerHTTP  `json:"http"`
+	TLS            RawConfigServerTLS   `json:"tls"`
+	HTTP2          RawConfigServerHTTP2 `json:"http2"`
+	HTTP3          RawConfigServerHTTP3 `json:"http3"`
+	RequestTimeout uint                 `json:"request_timeout"`
 }
 
 type RawConfigServerHTTP struct {
@@ -52,12 +53,13 @@ type Config struct {
 }
 
 type ConfigServer struct {
-	Address string
-	Port    uint16
-	HTTP    RawConfigServerHTTP
-	TLS     ConfigServerTLS
-	HTTP2   ConfigServerHTTP2
-	HTTP3   ConfigServerHTTP3
+	Address        string
+	Port           uint16
+	HTTP           RawConfigServerHTTP
+	TLS            ConfigServerTLS
+	HTTP2          ConfigServerHTTP2
+	HTTP3          ConfigServerHTTP3
+	RequestTimeout uint
 }
 
 type ConfigServerTLS struct {
@@ -166,5 +168,6 @@ func Parse(filename string) (*Config, error) {
 	}
 	config.Server.HTTP2 = ConfigServerHTTP2(raw.Server.HTTP2)
 	config.Server.HTTP3 = ConfigServerHTTP3(raw.Server.HTTP3)
+	config.Server.RequestTimeout = raw.Server.RequestTimeout
 	return config, nil
 }
