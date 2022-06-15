@@ -200,6 +200,7 @@ func (cfg *Config) ClientRun(ctx context.Context, GlobalLog *logplus.LogPlus) {
 							return false
 						} else {
 							p++
+							continue
 						}
 					}
 					break
