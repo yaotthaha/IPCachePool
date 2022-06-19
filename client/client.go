@@ -157,7 +157,8 @@ func (cfg *Config) ClientRun(ctx context.Context, GlobalLog *logplus.LogPlus) {
 						}
 					}(),
 				}
-				req.Header.Add("Content-Type", "application/json")
+				req.Header = http.Header{}
+				req.Header.Set("Content-Type", "application/json")
 				req = req.WithContext(ctx)
 				var resp *http.Response
 				p := 0
