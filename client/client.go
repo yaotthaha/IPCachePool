@@ -118,11 +118,6 @@ func (cfg *Config) ClientRun(ctx context.Context, GlobalLog *logplus.LogPlus) {
 				}
 				Data := GlobalData
 				GlobalLock.RUnlock()
-				RawData, err := GenRaw(Data, time.Duration(V.TTL)*time.Second, V.PrivateKey, V.ClientID)
-				if err != nil {
-					Log.Println(logplus.Error, fmt.Sprintf("gen raw data error: %s", err))
-					return false
-				}
 				client := http.Client{}
 				client.Timeout = time.Duration(int(V.RequestTimeout)) * time.Second
 				HTTPTr := make(map[int]interface{})
@@ -152,7 +147,6 @@ func (cfg *Config) ClientRun(ctx context.Context, GlobalLog *logplus.LogPlus) {
 						Host: net.JoinHostPort(V.Transport.Address, strconv.Itoa(int(V.Transport.Port))),
 						Path: V.Transport.HTTP.Path,
 					},
-					Body: ioutil.NopCloser(bytes.NewReader(RawData)),
 					Host: func() string {
 						if V.Transport.HTTP.Host != "" {
 							return V.Transport.HTTP.Host
@@ -199,7 +193,12 @@ func (cfg *Config) ClientRun(ctx context.Context, GlobalLog *logplus.LogPlus) {
 							}
 							client.Transport = t.(*http3.RoundTripper)
 						}
-						var err error
+						RawData, err := GenRaw(Data, time.Duration(V.TTL)*time.Second, V.PrivateKey, V.ClientID)
+						if err != nil {
+							Log.Println(logplus.Error, fmt.Sprintf("gen raw data error: %s", err))
+							return false
+						}
+						req.Body = ioutil.NopCloser(bytes.NewBuffer(RawData))
 						resp, err = client.Do(req)
 						if err != nil {
 							Log.Println(logplus.Error, fmt.Sprintf("[%s] http request error: %s", V.Name, err))
@@ -223,7 +222,7 @@ func (cfg *Config) ClientRun(ctx context.Context, GlobalLog *logplus.LogPlus) {
 					}
 				}(resp.Body)
 				buf := bytes.Buffer{}
-				_, err = io.Copy(&buf, resp.Body)
+				_, err := io.Copy(&buf, resp.Body)
 				if err != nil {
 					Log.Println(logplus.Error, fmt.Sprintf("[%s] http read response error: %s", V.Name, err))
 					return false
