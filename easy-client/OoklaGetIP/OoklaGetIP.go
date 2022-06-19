@@ -103,10 +103,11 @@ func OoklaGetAllPeer() ([]OoklaPeer, error) {
 			return strings.Join(QueryStringSlice, "&")
 		}(),
 	}
-	req, err := http.NewRequest("GET", u.String(), nil)
+	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.149 Safari/537.36")
 	IP, err := HTTPDNSResolveFunc(PeerGetURLHost)
 	if err != nil {
 		return nil, err

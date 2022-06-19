@@ -1,7 +1,7 @@
 {
   "log": {
     "file": "./log/client.log",
-    "more_msg": true
+    "debug": true
   },
   "shell": "",
   "shell_arg": "",

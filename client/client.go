@@ -110,7 +110,7 @@ func (cfg *Config) ClientRun(ctx context.Context, GlobalLog *logplus.LogPlus) {
 					tlsCfg.ServerName = V.Transport.TLS.SNI
 				}
 			}
-			Do := func() bool {
+			Do := func(ctx context.Context) bool {
 				GlobalLock.RLock()
 				if !(len(GlobalData.IPv4) > 0 || len(GlobalData.IPv6) > 0 || len(GlobalData.CIDRv4) > 0 || len(GlobalData.CIDRv6) > 0) {
 					GlobalLock.RUnlock()
@@ -139,7 +139,7 @@ func (cfg *Config) ClientRun(ctx context.Context, GlobalLog *logplus.LogPlus) {
 						TLSClientConfig: tlsCfg,
 					}
 				}
-				req := http.Request{
+				req := &http.Request{
 					Method: http.MethodGet,
 					URL: &url.URL{
 						Scheme: func() string {
@@ -163,47 +163,58 @@ func (cfg *Config) ClientRun(ctx context.Context, GlobalLog *logplus.LogPlus) {
 						}
 					}(),
 				}
+				req.Header.Add("Content-Type", "application/json")
+				req = req.WithContext(ctx)
 				var resp *http.Response
 				p := 0
 				retry := 2
 				for {
-					l := p % len(HTTPTr)
-					t := HTTPTr[len(HTTPTr)-l-1]
-					switch t.(type) {
-					case *http.Transport:
-						if r := p / len(HTTPTr); r == 0 {
-							Log.Println(logplus.Debug, fmt.Sprintf("[%s] use http client", V.Name))
-						} else {
-							Log.Println(logplus.Debug, fmt.Sprintf("[%s] retry %s, use http client", V.Name, strconv.Itoa(r)))
+					BreakTag := false
+					select {
+					case <-ctx.Done():
+						return false
+					default:
+						l := p % len(HTTPTr)
+						t := HTTPTr[len(HTTPTr)-l-1]
+						switch t.(type) {
+						case *http.Transport:
+							if r := p / len(HTTPTr); r == 0 {
+								Log.Println(logplus.Debug, fmt.Sprintf("[%s] use http client", V.Name))
+							} else {
+								Log.Println(logplus.Debug, fmt.Sprintf("[%s] retry %s, use http client", V.Name, strconv.Itoa(r)))
+							}
+							client.Transport = t.(*http.Transport)
+						case *http2.Transport:
+							if r := p / len(HTTPTr); r == 0 {
+								Log.Println(logplus.Debug, fmt.Sprintf("[%s] use http2 client", V.Name))
+							} else {
+								Log.Println(logplus.Debug, fmt.Sprintf("[%s] retry %s, use http2 client", V.Name, strconv.Itoa(r)))
+							}
+							client.Transport = t.(*http2.Transport)
+						case *http3.RoundTripper:
+							if r := p / len(HTTPTr); r == 0 {
+								Log.Println(logplus.Debug, fmt.Sprintf("[%s] use http3 client", V.Name))
+							} else {
+								Log.Println(logplus.Debug, fmt.Sprintf("[%s] retry %s, use http3 client", V.Name, strconv.Itoa(r)))
+							}
+							client.Transport = t.(*http3.RoundTripper)
 						}
-						client.Transport = t.(*http.Transport)
-					case *http2.Transport:
-						if r := p / len(HTTPTr); r == 0 {
-							Log.Println(logplus.Debug, fmt.Sprintf("[%s] use http2 client", V.Name))
-						} else {
-							Log.Println(logplus.Debug, fmt.Sprintf("[%s] retry %s, use http2 client", V.Name, strconv.Itoa(r)))
+						var err error
+						resp, err = client.Do(req)
+						if err != nil {
+							Log.Println(logplus.Error, fmt.Sprintf("[%s] http request error: %s", V.Name, err))
+							if p == len(HTTPTr)*retry-1 {
+								return false
+							} else {
+								p++
+								continue
+							}
 						}
-						client.Transport = t.(*http2.Transport)
-					case *http3.RoundTripper:
-						if r := p / len(HTTPTr); r == 0 {
-							Log.Println(logplus.Debug, fmt.Sprintf("[%s] use http3 client", V.Name))
-						} else {
-							Log.Println(logplus.Debug, fmt.Sprintf("[%s] retry %s, use http3 client", V.Name, strconv.Itoa(r)))
-						}
-						client.Transport = t.(*http3.RoundTripper)
+						BreakTag = true
 					}
-					var err error
-					resp, err = client.Do(&req)
-					if err != nil {
-						Log.Println(logplus.Error, fmt.Sprintf("[%s] http request error: %s", V.Name, err))
-						if p == len(HTTPTr)*retry-1 {
-							return false
-						} else {
-							p++
-							continue
-						}
+					if BreakTag {
+						break
 					}
-					break
 				}
 				defer func(Body io.ReadCloser) {
 					err := Body.Close()
@@ -235,25 +246,11 @@ func (cfg *Config) ClientRun(ctx context.Context, GlobalLog *logplus.LogPlus) {
 				case <-ctx.Done():
 					return
 				case <-firstChan:
-					c, cFunc := context.WithCancel(context.Background())
-					go func() {
-						select {
-						case <-firstChan:
-						case <-c.Done():
-							return
-						}
-					}()
-					for !Do() {
-						select {
-						case <-time.After(2 * time.Second):
-						case <-ctx.Done():
-							cFunc()
-							return
-						}
+					for !Do(ctx) {
+						<-time.After(2 * time.Second)
 					}
-					cFunc()
 				case <-time.After(time.Duration(V.Interval) * time.Second):
-					Do()
+					Do(ctx)
 				}
 			}
 		}(v)
