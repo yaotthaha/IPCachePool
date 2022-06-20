@@ -565,15 +565,15 @@ func Handler(UUID string, buf []byte) []byte {
 		Log.Println(logplus.Debug, fmt.Sprintf("[%s] time parse error: %s", UUID, err))
 		return []byte("fail")
 	}
-	if T.Add(10 * time.Second).Before(time.Now()) {
-		Log.Println(logplus.Debug, fmt.Sprintf("[%s] time is too old: %s", UUID, Data.Time))
-		return []byte("fail")
-	}
 	if _, err := RequestCacheMap.Get(T); err == nil {
 		Log.Println(logplus.Debug, fmt.Sprintf("[%s] attack", UUID))
 		return []byte("fail")
 	} else {
 		_ = RequestCacheMap.Add(T, nil, 10*time.Second, nil)
+	}
+	if T.Add(10 * time.Second).Before(time.Now()) {
+		Log.Println(logplus.Debug, fmt.Sprintf("[%s] time is too old: %s", UUID, Data.Time))
+		return []byte("fail")
 	}
 	Verify, err := tool.ECCVerifySign([]byte(Data.Time), Data.Verify, []byte(Cli.PublicKey))
 	if err != nil {
@@ -585,13 +585,8 @@ func Handler(UUID string, buf []byte) []byte {
 		return []byte("fail")
 	}
 	RealData := pool.Receive{
-		Data: pool.NetAddrSlice{
-			IPv4:   nil,
-			IPv6:   nil,
-			CIDRv4: nil,
-			CIDRv6: nil,
-		},
-		TTL: time.Duration(Data.TTL) * time.Second,
+		Data: pool.NetAddrSlice{},
+		TTL:  time.Duration(Data.TTL) * time.Second,
 	}
 	if Data.Data.IPv4 != nil {
 		RealData.Data.IPv4 = Data.Data.IPv4
